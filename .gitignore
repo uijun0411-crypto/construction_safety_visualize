@@ -1,0 +1,6 @@
+.venv/
+node_modules
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+fire_risk_project/data/backups/
