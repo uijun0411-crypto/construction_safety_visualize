@@ -720,6 +720,10 @@ def save_evaluation(record, storage_path):
     """평가 전체를 하나의 트랜잭션으로 저장. 같은 ID의 다른 내용은 거부합니다."""
     import sqlite3
     from contextlib import closing
+    try:
+        from . import storage as evaluation_storage
+    except ImportError:
+        import storage as evaluation_storage
 
     required = {"저장형식버전", "평가ID", "평가일시", "현장명", "작업ID",
                 "요약", "응답", "응답상세", "화재감시자검토", "화재감시자응답",
@@ -733,6 +737,24 @@ def save_evaluation(record, storage_path):
             raise ValueError(f"{key} 값이 필요합니다.")
     payload = json.dumps(record, ensure_ascii=False, sort_keys=True,
                          separators=(",", ":"), allow_nan=False)
+    if evaluation_storage.is_postgres_storage(storage_path):
+        evaluation_storage.initialize(storage_path)
+        with evaluation_storage._connect_postgres(storage_path) as connection:
+            old = connection.execute(
+                "SELECT payload FROM evaluations WHERE evaluation_id = %s",
+                (record["평가ID"],)
+            ).fetchone()
+            if old is not None:
+                old_payload = old[0] if isinstance(old[0], dict) else json.loads(old[0])
+                if old_payload != record:
+                    raise ValueError("같은 평가ID에 다른 내용이 있습니다. 새 평가ID를 사용하세요.")
+                return {"평가ID": record["평가ID"], "저장상태": "이미 저장됨", "저장경로": "DATABASE_URL"}
+            connection.execute(
+                "INSERT INTO evaluations (evaluation_id, payload) VALUES (%s, %s::jsonb)",
+                (record["평가ID"], payload),
+            )
+        return {"평가ID": record["평가ID"], "저장상태": "저장 완료", "저장경로": "DATABASE_URL"}
+
     target = Path(storage_path).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(target)) as connection, connection:
@@ -757,6 +779,20 @@ def load_evaluation(evaluation_id, storage_path):
     """저장 당시의 입력·결과를 조회합니다. 현재 규칙으로 다시 계산하지 않습니다."""
     import sqlite3
     from contextlib import closing
+    try:
+        from . import storage as evaluation_storage
+    except ImportError:
+        import storage as evaluation_storage
+    if evaluation_storage.is_postgres_storage(storage_path):
+        with evaluation_storage._connect_postgres(storage_path) as connection:
+            row = connection.execute(
+                "SELECT payload FROM evaluations WHERE evaluation_id = %s",
+                (evaluation_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"평가ID를 찾을 수 없습니다: {evaluation_id}")
+        return row[0] if isinstance(row[0], dict) else json.loads(row[0])
+
     target = Path(storage_path).expanduser().resolve()
     if not target.is_file():
         raise FileNotFoundError(target)
@@ -774,15 +810,27 @@ def list_evaluations(storage_path):
     """저장된 평가 목록을 반환합니다."""
     import sqlite3
     from contextlib import closing
+    try:
+        from . import storage as evaluation_storage
+    except ImportError:
+        import storage as evaluation_storage
     columns = ["평가ID", "평가일시", "현장명", "작업ID", "위험지수",
                "기본위험등급(잠정)", "최종판정"]
-    target = Path(storage_path).expanduser().resolve()
-    if not target.is_file():
-        return pd.DataFrame(columns=columns)
-    with closing(sqlite3.connect(target.as_uri() + "?mode=ro", uri=True)) as connection, connection:
-        records = [json.loads(row[0]) for row in connection.execute(
-            "SELECT payload FROM evaluations"
-        ).fetchall()]
+    if evaluation_storage.is_postgres_storage(storage_path):
+        evaluation_storage.initialize(storage_path)
+        with evaluation_storage._connect_postgres(storage_path) as connection:
+            records = [
+                row[0] if isinstance(row[0], dict) else json.loads(row[0])
+                for row in connection.execute("SELECT payload FROM evaluations").fetchall()
+            ]
+    else:
+        target = Path(storage_path).expanduser().resolve()
+        if not target.is_file():
+            return pd.DataFrame(columns=columns)
+        with closing(sqlite3.connect(target.as_uri() + "?mode=ro", uri=True)) as connection, connection:
+            records = [json.loads(row[0]) for row in connection.execute(
+                "SELECT payload FROM evaluations"
+            ).fetchall()]
     rows = []
     for record in records:
         rows.append({

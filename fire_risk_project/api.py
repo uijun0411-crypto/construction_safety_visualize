@@ -1,12 +1,11 @@
 """React용 API. 실행: uvicorn fire_risk_project.api:app --reload"""
-from contextlib import asynccontextmanager, closing
+from contextlib import asynccontextmanager
 import hmac
 import json
 import logging
 import os
-from pathlib import Path
 import sqlite3
-import time
+from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -15,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr
 
 from . import risk_engine as engine
+from . import storage as evaluation_storage
 
 ROOT = Path(__file__).resolve().parent
 
@@ -41,7 +41,7 @@ class Comparison(BaseModel):
 
 
 def create_app(storage_path=None, access_key=None, origins=None):
-    storage = Path(storage_path or os.environ.get("FIRE_RISK_STORAGE", ROOT / "outputs/api_evaluations.sqlite3"))
+    storage = evaluation_storage.configured_storage(storage_path)
     key = access_key if access_key is not None else os.environ.get("APP_ACCESS_KEY", "")
     allowed_origins = origins if origins is not None else [
         s.strip().rstrip("/") for s in os.environ.get(
@@ -54,10 +54,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
         if os.environ.get("RENDER") and not key:
             raise RuntimeError("Render 배포에는 APP_ACCESS_KEY 설정이 필요합니다.")
         engine.load_databases(ROOT / "data")
-        storage.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(storage)) as conn, conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS evaluations (evaluation_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
-            conn.execute("CREATE TABLE IF NOT EXISTS evaluation_drafts (evaluation_id TEXT PRIMARY KEY, payload TEXT NOT NULL, created_at REAL NOT NULL)")
+        evaluation_storage.initialize(storage)
         yield
 
     app = FastAPI(title="화재 위험도 평가 API", version="1.0.0", lifespan=lifespan)
@@ -81,6 +78,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
 
     @app.exception_handler(sqlite3.Error)
     @app.exception_handler(OSError)
+    @app.exception_handler(evaluation_storage.StorageError)
     async def storage_error(request: Request, error: Exception):
         logging.exception("평가 저장소 오류", exc_info=error)
         return JSONResponse(status_code=503, content={"detail": "저장소에 연결하지 못했습니다. 잠시 후 다시 시도하세요."})
@@ -108,24 +106,18 @@ def create_app(storage_path=None, access_key=None, origins=None):
         if set(body.watcher_answers) - set(engine.watcher_questions["추가질문ID"]):
             raise ValueError("알 수 없는 화재감시자 추가질문입니다.")
         record = engine.build_evaluation(body.site_name, body.task_id, answers, body.watcher_answers)
-        with closing(sqlite3.connect(storage)) as conn, conn:
-            conn.execute("DELETE FROM evaluation_drafts WHERE created_at < ?", (time.time() - 86400,))
-            conn.execute("INSERT INTO evaluation_drafts VALUES (?, ?, ?)",
-                         (record["평가ID"], json.dumps(record, ensure_ascii=False), time.time()))
+        evaluation_storage.save_draft(storage, record)
         return record
 
     @app.post("/api/evaluations/{evaluation_id}/save", dependencies=secured)
     def save(evaluation_id: str):
         # 요청 본문의 점수를 신뢰하지 않고 서버가 계산한 초안만 저장합니다.
-        with closing(sqlite3.connect(storage)) as conn:
-            saved = conn.execute("SELECT 1 FROM evaluations WHERE evaluation_id = ?", (evaluation_id,)).fetchone()
-            if saved:
-                return {"평가ID": evaluation_id, "저장상태": "이미 저장됨"}
-            draft = conn.execute("SELECT payload FROM evaluation_drafts WHERE evaluation_id = ? AND created_at >= ?",
-                                 (evaluation_id, time.time() - 86400)).fetchone()
+        if evaluation_storage.saved_exists(storage, evaluation_id):
+            return {"평가ID": evaluation_id, "저장상태": "이미 저장됨"}
+        draft = evaluation_storage.load_fresh_draft(storage, evaluation_id)
         if not draft:
             raise HTTPException(404, "평가 초안이 없거나 24시간이 지났습니다. 다시 평가하세요.")
-        result = engine.save_evaluation(json.loads(draft[0]), storage)
+        result = engine.save_evaluation(draft, storage)
         return {k: result[k] for k in ("평가ID", "저장상태")}
 
     @app.get("/api/evaluations", dependencies=secured)

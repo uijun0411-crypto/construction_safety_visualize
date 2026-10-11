@@ -52,12 +52,47 @@ $env:FIRE_RISK_STORAGE = (Join-Path (Get-Location) 'fire_risk_project/outputs/ev
 
 API는 시작 시 환경변수를 읽습니다. 변경 후 다시 실행하세요.
 백엔드는 `.env`를 자동으로 읽지 않습니다. PowerShell 환경변수나 호스팅 환경변수를 사용하세요.
+`DATABASE_URL`이 있으면 SQLite 파일 대신 Postgres(Supabase 등)에 저장합니다.
+
+## Supabase 저장소 사용
+
+Supabase 프로젝트에서 Postgres 연결 문자열을 만든 뒤 Render의 `DATABASE_URL`에 넣습니다.
+연결 문자열에는 DB 비밀번호가 포함되므로 프런트엔드 `VITE_*` 변수에 넣지 마세요.
+
+API가 시작할 때 아래 테이블을 자동으로 생성합니다. 직접 만들고 싶다면 SQL Editor에서
+다음 SQL을 실행해도 됩니다.
+
+```sql
+create table if not exists evaluations (
+  evaluation_id text primary key,
+  payload jsonb not null
+);
+
+create table if not exists evaluation_drafts (
+  evaluation_id text primary key,
+  payload jsonb not null,
+  created_at double precision not null
+);
+```
+
+로컬에서 Supabase 연결을 시험하려면 macOS/Linux는 다음처럼 실행합니다.
+
+```bash
+DATABASE_URL='postgresql://...' ./.venv/bin/python -m uvicorn fire_risk_project.api:app --host 127.0.0.1 --port 8000
+```
+
+PowerShell은 다음처럼 실행합니다.
+
+```powershell
+$env:DATABASE_URL = 'postgresql://...'
+.\.venv\Scripts\python.exe -m uvicorn fire_risk_project.api:app --reload --host 127.0.0.1 --port 8000
+```
 
 ## 1. Python API를 Render에 배포
 
 저장소를 GitHub에 올린 다음 Render에서 **New → Blueprint**로 연결하고
-최상위 `render.yaml`을 사용합니다. **유료 Starter 서비스와 1GB 영구 디스크**가
-선언되어 있으므로 생성 화면에서 비용을 확인합니다. 이 작업에서는 호스팅 리소스를 생성하지 않았습니다.
+최상위 `render.yaml`을 사용합니다. 현재 설정은 **Free Web Service + Supabase Postgres**를
+전제로 합니다. 이 작업에서는 호스팅 리소스를 생성하지 않았습니다.
 
 Blueprint의 `CORS_ORIGINS`에 실제 Vercel 주소를 입력합니다.
 예: `https://my-fire-risk.vercel.app` (경로와 마지막 `/` 없이).
@@ -73,21 +108,18 @@ New Web Service로 수동 생성한다면 아래 설정을 사용합니다.
 | Start Command | `uvicorn fire_risk_project.api:app --host 0.0.0.0 --port $PORT --workers 1` |
 | Health Check Path | `/health` |
 | `PYTHON_VERSION` | `3.13.5` |
-| Disk Mount Path / Size | `/var/data` / 1 GB |
-| `FIRE_RISK_STORAGE` | `/var/data/evaluations.sqlite3` |
+| `DATABASE_URL` | Supabase Postgres 연결 문자열 |
 | `CORS_ORIGINS` | 실제 Vercel Origin |
 | `APP_ACCESS_KEY` | 관리자가 생성한 긴 무작위 접속 키 |
 
 배포 후 `https://서비스이름.onrender.com/health`에서 `{"status":"ok"}`를 확인합니다.
 Render 환경에서 접속 키가 없으면 API 시작을 거부합니다.
 
-**영구 디스크 없는 Render 로컬 파일은 재배포·재시작 시 사라집니다.**
-현재 SQLite 구성은 영구 디스크가 있는 단일 인스턴스에서 운용합니다.
-기존 `evaluations_demo.sqlite3`는 자동으로 배포 DB에 복사하지 않아 새 서버는 빈 기록으로 시작합니다.
-기존 기록을 옮길 때는 쓰기를 중지하고 SQLite 백업을 만들어 영구 디스크에 복원하세요.
-중요한 기록은 별도 SQLite 백업도 유지하세요.
+`DATABASE_URL`을 설정하지 않으면 API는 SQLite 파일 저장으로 돌아갑니다. Render Free에서
+SQLite 파일을 쓰면 재배포·재시작 시 기록 보존을 기대하기 어렵습니다.
+기존 `evaluations_demo.sqlite3`는 자동으로 Supabase에 복사하지 않아 새 서버는 빈 기록으로 시작합니다.
+중요한 기록은 Supabase 백업 또는 별도 내보내기를 유지하세요.
 
-다중 인스턴스 확장에는 PostgreSQL 저장 계층을 추가해야 합니다.
 현재 접속 키는 팀 공용이며 키를 가진 사람은 저장 기록 전체를 볼 수 있습니다.
 사용자별 데이터 분리가 필요하면 사용자 인증과 권한을 추가해야 합니다.
 
