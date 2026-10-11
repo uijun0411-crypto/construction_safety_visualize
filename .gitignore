@@ -4,3 +4,9 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 fire_risk_project/data/backups/
+dist/
+.env
+.env.*
+!.env.example
+.tools/
+fire_risk_project/outputs/api_*.sqlite3*

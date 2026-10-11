@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: fire-risk-api
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r fire_risk_project/requirements-api.txt
+    startCommand: uvicorn fire_risk_project.api:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: FIRE_RISK_STORAGE
+        value: /var/data/evaluations.sqlite3
+      - key: CORS_ORIGINS
+        sync: false
+      - key: APP_ACCESS_KEY
+        generateValue: true
+    disk:
+      name: evaluation-data
+      mountPath: /var/data
+      sizeGB: 1

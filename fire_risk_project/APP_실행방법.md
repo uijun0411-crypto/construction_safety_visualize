@@ -1,5 +1,8 @@
 ﻿# 로컬 평가 화면 실행
 
+React UI + Python API 실행 및 Vercel/Render 배포는 [DEPLOYMENT.md](DEPLOYMENT.md)를 참고하세요.
+아래는 기존 Streamlit 화면의 실행 방법입니다.
+
 VS Code에서 터미널 > 새 터미널을 열고 PowerShell에서 실행합니다.
 
 ```powershell
