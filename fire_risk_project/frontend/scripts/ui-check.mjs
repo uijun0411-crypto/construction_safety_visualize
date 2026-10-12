@@ -1,0 +1,46 @@
+// Run with the API running on a disposable test database, never production.
+import assert from 'node:assert/strict';
+import { createServer } from 'vite';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
+const endpoint = process.env.UI_TEST_API || 'http://127.0.0.1:8000/api';
+async function post(path, body) {
+  const r = await fetch(endpoint + path, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  assert.equal(r.status,200,await r.clone().text());return r.json();
+}
+try {
+  const inputs = await server.ssrLoadModule('/src/assessment-inputs.jsx');
+  const result = await server.ssrLoadModule('/src/assessment-result.jsx');
+  const render = (Component,props) => renderToStaticMarkup(React.createElement(Component,props));
+  const schema = await post('/questions',{answers:{}});
+  const initial = render(inputs.AssessmentQuestionGroups,{schema,answers:{},onChange:()=>{}});
+  assert.match(initial,/id="question-Q002"[^>]*disabled/);
+  assert.match(initial,/01<\/em>/);
+  assert.match(initial,/평가 제외/);
+  const watchers = render(inputs.FireWatchConditions,{questions:schema.watcher_questions,extras:{},onChange:()=>{}});
+  assert.equal((watchers.match(/value="" selected=""/g)||[]).length,4);
+  assert.match(watchers,/value="아니오">적용하지 않음/);
+  const absent = await post('/questions',{answers:{Q001:'없음'}});
+  assert.equal(absent.questions.find(q=>q['항목ID']==='Q002')['적용상태'],'조건제외');
+  const answers = {Q001:'있음',Q002:5,Q003:'미실시',Q004:'미배치',Q018:'용접방화포 미사용',Q019:'없음',Q020:'없음',Q025:'적정'};
+  const present = await post('/questions',{answers});
+  assert.equal(present.questions.find(q=>q['항목ID']==='Q002')['적용상태'],'적용');
+  const activeMarkup=render(inputs.AssessmentQuestionGroups,{schema:present,answers,onChange:()=>{}});
+  assert.doesNotMatch(activeMarkup,/id="question-Q002"[^>]*disabled/);
+  const record=await post('/evaluate',{site_name:'UI 자동검증 (미저장)',answers,watcher_answers:{W001:'예',W002:'아니오',W003:'아니오',W004:'아니오'}});
+  const markup=render(result.default,{record});
+  for(const title of ['위험요인 분석','위험기여도 TOP 5','필요한 조치','판단 근거','상세 계산내역 보기'])assert.ok(markup.includes(title),title);
+  assert.ok(markup.includes(record['요약']['위험지수'].toFixed(2)));
+  assert.doesNotMatch(markup,/<details[^>]*open/);
+  assert.doesNotMatch(markup,/NaN|undefined|강제경고 0건/);
+  const representatives=record['응답상세'].filter(r=>r['집계대표여부']&&r['가중점수']>0);
+  const contributions=representatives.reduce((sum,r)=>sum+r['가중점수']/record['요약']['최대가중점수']*100,0);
+  assert.ok(Math.abs(contributions-record['요약']['위험지수'])<0.02);
+  const refs=(await server.ssrLoadModule('/src/reference-data.json')).default;
+  const linked=record['응답상세'].flatMap(r=>(r['관련기준ID']||'').split(';'));
+  const action=refs.standards.find(s=>linked.includes(s['기준ID'])&&s['필수조치']);
+  assert.ok(action&&markup.includes(action['필수조치']));
+  console.log('PASS: live API + React rendering, question conditions, W mapping, unset values, score contribution, DB actions and closed details.');
+  console.log('Real engine score:',record['요약']['위험지수']);
+} finally {await server.close();}
