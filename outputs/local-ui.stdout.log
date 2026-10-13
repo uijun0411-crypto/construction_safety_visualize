@@ -1,0 +1,38 @@
+
+  VITE v7.3.7  ready in 293 ms
+
+  ➜  Local:   http://127.0.0.1:5173/
+오후 4:58:40 [vite] (client) hmr update /src/assessment-inputs.jsx
+오후 4:58:40 [vite] (client) hmr update /src/main.jsx
+오후 4:58:40 [vite] (client) hmr invalidate /src/main.jsx Could not Fast Refresh ("true" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 4:58:40 [vite] (client) page reload src/main.jsx
+오후 4:58:40 [vite] (client) hmr update /src/assessment-result.jsx
+오후 4:58:40 [vite] (client) hmr invalidate /src/assessment-result.jsx Could not Fast Refresh ("colors" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 4:58:40 [vite] (client) hmr update /src/main.jsx
+오후 4:58:40 [vite] (client) hmr invalidate /src/main.jsx Could not Fast Refresh ("true" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 4:58:40 [vite] (client) page reload src/main.jsx
+오후 5:00:43 [vite] (client) hmr update /src/assessment-result.jsx
+오후 5:00:43 [vite] (client) hmr invalidate /src/assessment-result.jsx Could not Fast Refresh ("colors" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 5:00:43 [vite] (client) hmr update /src/main.jsx
+오후 5:00:43 [vite] (client) hmr invalidate /src/main.jsx Could not Fast Refresh ("true" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 5:00:43 [vite] (client) page reload src/main.jsx
+오후 5:00:44 [vite] (client) hmr update /src/assessment-result.jsx
+오후 5:00:45 [vite] (client) hmr invalidate /src/assessment-result.jsx Could not Fast Refresh ("colors" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 5:00:45 [vite] (client) hmr update /src/main.jsx
+오후 5:00:45 [vite] (client) hmr invalidate /src/main.jsx Could not Fast Refresh ("true" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 5:00:45 [vite] (client) page reload src/main.jsx
+오후 5:01:10 [vite] (client) hmr update /src/assessment-result.jsx
+오후 5:01:10 [vite] (client) hmr invalidate /src/assessment-result.jsx Could not Fast Refresh ("colors" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 5:01:10 [vite] (client) hmr update /src/main.jsx
+오후 5:01:10 [vite] (client) hmr invalidate /src/main.jsx Could not Fast Refresh ("true" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 5:01:10 [vite] (client) page reload src/main.jsx
+오후 5:01:33 [vite] (client) hmr update /src/comparison.jsx
+오후 5:01:33 [vite] (client) hmr invalidate /src/comparison.jsx Could not Fast Refresh ("changeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 5:01:33 [vite] (client) hmr update /src/main.jsx
+오후 5:01:33 [vite] (client) hmr invalidate /src/main.jsx Could not Fast Refresh ("true" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 5:01:33 [vite] (client) page reload src/main.jsx
+오후 5:02:09 [vite] (client) hmr update /src/assessment-result.jsx
+오후 5:02:09 [vite] (client) hmr invalidate /src/assessment-result.jsx Could not Fast Refresh ("colors" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 5:02:09 [vite] (client) hmr update /src/main.jsx
+오후 5:02:09 [vite] (client) hmr invalidate /src/main.jsx Could not Fast Refresh ("true" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+오후 5:02:09 [vite] (client) page reload src/main.jsx

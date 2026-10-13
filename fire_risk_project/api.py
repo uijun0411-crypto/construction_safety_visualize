@@ -94,7 +94,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
     @app.post("/api/questions", dependencies=secured)
     def questions(body: Answers):
         return {"questions": frame_rows(engine.get_prework_questions(body.task_id, body.answers)),
-                "watcher_questions": frame_rows(engine.watcher_questions)}
+                "watcher_questions": frame_rows(engine.watcher_questions[~engine.watcher_questions['추가질문ID'].isin(['W002', 'W003'])])}
 
     @app.post("/api/evaluate", dependencies=secured)
     def evaluate(body: EvaluationInput):
@@ -105,7 +105,12 @@ def create_app(storage_path=None, access_key=None, origins=None):
             raise ValueError("Q003·Q004의 해당없음 근거는 아직 자동 검증하지 않습니다. 계산을 보류합니다. 실제 상태와 다르게 응답을 바꾸지 마세요.")
         if set(body.watcher_answers) - set(engine.watcher_questions["추가질문ID"]):
             raise ValueError("알 수 없는 화재감시자 추가질문입니다.")
-        record = engine.build_evaluation(body.site_name, body.task_id, answers, body.watcher_answers)
+        watcher_answers = dict(body.watcher_answers)
+        # Q019/Q020 cover the same conditions. Always prefer the current Q response,
+        # including unknown, over potentially stale values from older clients.
+        for wid, qid in (("W002", "Q019"), ("W003", "Q020")):
+            watcher_answers[wid] = {"있음": "예", "없음": "아니오", "확인불가": "확인불가"}.get(answers.get(qid), "확인불가")
+        record = engine.build_evaluation(body.site_name, body.task_id, answers, watcher_answers)
         evaluation_storage.save_draft(storage, record)
         return record
 

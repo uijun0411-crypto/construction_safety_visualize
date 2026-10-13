@@ -69,6 +69,29 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(self.client.post("/api/evaluate", json={**self.body, "answers": answers}).status_code, 422)
         self.assertEqual(self.client.post("/api/evaluate", json={**self.body, "site_name": " "}).status_code, 422)
 
+    def test_watcher_reuses_current_q_responses(self):
+        schema = self.client.post("/api/questions", json={"answers": {}}).json()
+        self.assertEqual([r["추가질문ID"] for r in schema["watcher_questions"]], ["W001", "W004"])
+        for value, expected in (("있음", "예"), ("없음", "아니오"), ("확인불가", "확인불가")):
+            self.body["answers"].update(Q019=value, Q020=value)
+            self.body["watcher_answers"].update(W001="예", W002="아니오", W003="아니오", W004="예")
+            record = self.evaluate()
+            responses = {r["추가질문ID"]: r["응답"] for r in record["화재감시자응답"]}
+            self.assertEqual(responses, {"W001": "예", "W002": expected, "W003": expected, "W004": "예"})
+
+    def test_comparison_exclusion_is_not_zero(self):
+        self.body["answers"].update(Q001="있음", Q002=5)
+        before = self.evaluate()
+        self.client.post(f"/api/evaluations/{before['평가ID']}/save")
+        self.body["answers"]["Q001"] = "없음"
+        after = self.evaluate()
+        self.client.post(f"/api/evaluations/{after['평가ID']}/save")
+        result = self.client.post("/api/compare", json={"before_id": before["평가ID"], "after_id": after["평가ID"]}).json()
+        distance = next(r for r in result["변경항목"] if r["항목ID"] == "Q002")
+        self.assertGreater(distance["이전_가중점수"], 0)
+        self.assertEqual(distance["이후_적용상태"], "조건제외")
+        self.assertIsNone(distance["이후_가중점수"])
+
     def test_authorization_cors_and_missing_record(self):
         del self.client.headers["X-Access-Key"]
         self.assertEqual(self.client.get("/api/evaluations").status_code, 401)

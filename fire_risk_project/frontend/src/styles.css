@@ -34,3 +34,16 @@
 a{color:#235d6b;text-underline-offset:3px}
 @media(max-width:850px){.result-hero{grid-template-columns:1fr}.analysis-grid{grid-template-columns:1fr}.result-hero .metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:700px){.question-card,.action-card{padding:14px}.result-hero{gap:10px}.ring{width:190px}.metrics .metric{min-width:0}.metric strong{overflow-wrap:anywhere}select{max-width:100%}}
+.comparison-summary { margin-top: 28px; }
+.comparison .metric strong { font-size: clamp(17px, 2vw, 25px); }
+.change-card { border: 1px solid var(--line, #dbe2e5); border-radius: 12px; padding: 20px; margin: 14px 0; }
+.change-card h4 { margin: 0 0 10px; }
+.contribution-row { display: grid; grid-template-columns: 36px minmax(40px, 1fr) 48px; align-items: center; gap: 12px; margin: 12px 0; }
+.contribution-row .bar-track { margin: 0; }
+.contribution-row .before-bar > div { background: #8d9eac; }
+.contribution-row b { text-align: right; }
+.excluded-contribution { grid-column: 2 / 4; color: #65727e; border-left: 3px dashed #bac5ce; padding-left: 12px; }
+.state-badge.increase { color: #ac4920; background: #fff1e9; }
+.state-badge.decrease { color: #216b60; background: #e7f4ef; }
+.state-badge.neutral { color: #536674; background: #edf1f4; }
+.question-group > .questions + .questions { margin-top: 16px; }

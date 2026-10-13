@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { api, setAccessKey } from './api';
 import './styles.css';
 import Assessment, { colors } from './assessment-result';
-import { AssessmentQuestionGroups, FireWatchConditions } from './assessment-inputs';
+import { AssessmentQuestionGroups } from './assessment-inputs';
+import Comparison from './comparison';
 
 const text = value => value == null ? '—' : typeof value === 'boolean' ? (value ? '예' : '아니오') : typeof value === 'object' ? JSON.stringify(value) : String(value);
 const score = value => value == null ? '미산정' : Number(value).toFixed(2);
@@ -11,7 +12,7 @@ const date = value => new Date(value).toLocaleString('ko-KR', { timeZone: 'Asia/
 
 function Table({ rows }) {
   if (!rows?.length) return <p className="empty">표시할 기록이 없습니다.</p>;
-  const columns = [...new Set(rows.flatMap(Object.keys))];
+  const columns = [...new Set(rows.flatMap(Object.keys))].filter(k => !/(?:ID|아이디)$/i.test(k) && k !== '적용상태');
   return <div className="table-wrap" tabIndex="0"><table><thead><tr>{columns.map(k => <th key={k}>{k}</th>)}</tr></thead><tbody>{rows.map((r, i) => <tr key={i}>{columns.map(k => <td key={k}>{text(r[k])}</td>)}</tr>)}</tbody></table></div>;
 }
 
@@ -42,7 +43,7 @@ function NewEvaluation({ current, setCurrent, onSaved }) {
   async function evaluate(event) {
     event.preventDefault();
     if ((schema?.watcher_questions || []).some(q=>!extras[q['추가질문ID']])) {
-      setError('화재감시자 추가 조건을 모두 선택하세요. 판단이 어려우면 확인불가 또는 확인 필요를 선택하세요.');
+      setError('위험 조건을 모두 선택하세요. 판단이 어려우면 확인불가 또는 확인 필요를 선택하세요.');
       return;
     }
     setBusy(true); invalidate();
@@ -57,15 +58,16 @@ function NewEvaluation({ current, setCurrent, onSaved }) {
     finally { setBusy(false); }
   }
   const active = schema?.questions.filter(q => q['적용상태'] === '적용') || [];
-  const answered = active.filter(q => answers[q['항목ID']] !== undefined && answers[q['항목ID']] !== '').length;
+  const uniqueConditions = schema?.watcher_questions || [];
+  const answered = active.filter(q => answers[q['항목ID']] !== undefined && answers[q['항목ID']] !== '').length
+    + uniqueConditions.filter(q => extras[q['추가질문ID']]).length;
   return <><div className="section-heading"><div><p className="eyebrow">PRE-WORK CHECK</p><h2>작업 시작 전 평가</h2><p className="muted">현장 상태를 확인하고 평가 기록을 남기세요.</p></div><span className="badge">H05 · 용접·용단</span></div>
     <form onSubmit={evaluate}><fieldset disabled={busy}>
     <section className="panel"><div className="step-title"><span>01</span><h3>현장 정보</h3></div><label className="field">현장명<input value={site} maxLength={200} required placeholder="예: 서울 ○○ 신축공사" onChange={e => { invalidate(); setSite(e.target.value); }} /></label></section>
-    <section className="panel"><div className="step-title"><span>02</span><h3>작업 상태 확인</h3><small>{loading ? '질문 확인 중…' : `${answered} / ${active.length} 응답`}</small></div>
+    <section className="panel"><div className="step-title"><span>02</span><h3>위험 조건</h3><small>{loading ? '질문 확인 중…' : `${answered} / ${active.length + uniqueConditions.length} 응답`}</small></div>
     <details className="guide"><summary>거리 입력과 용접방화포 질문 안내</summary><p>현재 거리 점수는 11m 미만/이상으로 구분합니다. 화재감시자의 거리 관련 조건은 정확히 11m를 포함하는 ‘11m 이내’입니다. 거리만으로 배치 의무 전체를 판정하지 않습니다.</p><p>불티 비산방지조치 실시 여부와 용접방화포 사용 시 성능인증 여부를 각각 확인합니다. 다른 방법을 쓴다면 방화포 미사용으로 응답하되 실제 비산방지조치 상태도 확인하세요.</p></details>
-    <AssessmentQuestionGroups schema={schema} answers={answers} loading={loading} onChange={(id,value)=>{invalidate();setAnswers(a=>({...a,[id]:value}));}} />
+    <AssessmentQuestionGroups schema={schema} answers={answers} extras={extras} onExtraChange={(id,value)=>{invalidate();setExtras(a=>({...a,[id]:value}));}} loading={loading} onChange={(id,value)=>{invalidate();setAnswers(a=>({...a,[id]:value}));}} />
     {!schema && !loading && <button type="button" onClick={() => setRetry(n => n + 1)}>질문 다시 불러오기</button>}</section>
-    <section className="panel"><div className="step-title"><span>03</span><h3>화재감시자 추가 조건</h3></div><FireWatchConditions questions={schema?.watcher_questions} extras={extras} onChange={(id,value)=>{invalidate();setExtras(a=>({...a,[id]:value}));}} /></section>
     <div className="actions"><p className="muted">선택하지 않은 항목은 미입력으로 남습니다.</p><button className="primary" disabled={loading || !schema || busy}>평가하기 <span>→</span></button></div>
     </fieldset></form>
     {error && <p className="error" role="alert">{error}</p>}{notice && <p className="success" role="status">{notice}</p>}
@@ -106,7 +108,7 @@ function History({ revision, onSelect }) {
     {error && <p className="error" role="alert">{error}</p>}
     {detail && <><Assessment record={detail} /><details className="panel"><summary>저장된 평가 요약·원래 입력</summary><Table rows={[detail['요약']]} /><Table rows={Object.entries(detail['응답']).map(([k, v]) => ({ 항목ID: k, 입력값: v }))} /></details><button onClick={() => onSelect(detail)}>이 평가를 대시보드에서 보기</button></>}
     <section className="panel"><h3>평가 두 건 비교</h3><p className="muted">같은 현장·작업을 선택하세요. 계산 기준이 다르면 점수 차이를 표시하지 않습니다.</p><div className="questions">{[['이전 평가', before, setBefore], ['이후 평가', after, setAfter]].map(([title, value, setter]) => <label className="field" key={title}>{title}<select value={value} disabled={busy} onChange={e => { setter(e.target.value); setComparison(null); }}><option value="">평가 선택</option>{rows.map(r => <option key={r['평가ID']} value={r['평가ID']}>{label(r)}</option>)}</select></label>)}</div><button className="primary" disabled={busy || !before || !after} onClick={compare}>비교하기</button>
-    {comparison && <div className="comparison"><Table rows={[comparison['비교안내']]} />{['평가요약', '변경항목', '추가응답변경', '화재감시자검토'].map(k => <details key={k} open><summary>{k}</summary><Table rows={comparison[k]} /></details>)}</div>}</section></>;
+    {comparison && <div className="comparison"><Comparison comparison={comparison} />{['평가요약', '변경항목', '추가응답변경', '화재감시자검토'].map(k => <details key={k}><summary>{k} 상세</summary><Table rows={comparison[k]} /></details>)}</div>}</section></>;
 }
 
 function Dashboard({ current, selected, revision }) {

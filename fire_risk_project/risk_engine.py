@@ -925,6 +925,10 @@ def compare_evaluations(before_id, after_id, storage_path):
         for field in fields:
             row["이전_" + field] = left.get(field)
             row["이후_" + field] = right.get(field)
+        # Exclusion is absence of assessment, never a measured zero score.
+        for prefix, detail in (("이전_", left), ("이후_", right)):
+            if detail.get("적용상태") != "적용":
+                row[prefix + "가중점수"] = None
         changes.append(row)
     change_columns = ["항목ID", "확인항목"] + [
         prefix + field for field in fields for prefix in ("이전_", "이후_")

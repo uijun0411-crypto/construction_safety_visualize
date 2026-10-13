@@ -18,8 +18,14 @@ try {
   assert.match(initial,/id="question-Q002"[^>]*disabled/);
   assert.match(initial,/01<\/em>/);
   assert.match(initial,/평가 제외/);
+  assert.equal((initial.match(/id="watch-W001"/g)||[]).length,1);
+  assert.equal((initial.match(/id="watch-W004"/g)||[]).length,1);
+  assert.doesNotMatch(initial,/watch-W002|watch-W003/);
+  const numbers = [...initial.matchAll(/<em>(\d+)<\/em>/g)].map(m=>Number(m[1]));
+  assert.deepEqual(numbers,numbers.map((_,i)=>i+1));
   const watchers = render(inputs.FireWatchConditions,{questions:schema.watcher_questions,extras:{},onChange:()=>{}});
-  assert.equal((watchers.match(/value="" selected=""/g)||[]).length,4);
+  assert.equal((watchers.match(/value="" selected=""/g)||[]).length,2);
+  assert.doesNotMatch(watchers,/watch-W002|watch-W003/);
   assert.match(watchers,/value="아니오">적용하지 않음/);
   const absent = await post('/questions',{answers:{Q001:'없음'}});
   assert.equal(absent.questions.find(q=>q['항목ID']==='Q002')['적용상태'],'조건제외');
