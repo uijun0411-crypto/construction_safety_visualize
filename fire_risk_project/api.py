@@ -71,8 +71,8 @@ def create_app(storage_path=None, access_key=None, origins=None):
 
     @asynccontextmanager
     async def lifespan(app):
-        if os.environ.get("RENDER") and not key:
-            raise RuntimeError("Render 배포에는 APP_ACCESS_KEY 설정이 필요합니다.")
+        if (os.environ.get("RENDER") or os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV")) and not key:
+            raise RuntimeError("배포 환경에서는 APP_ACCESS_KEY 설정이 필요합니다.")
         engine.load_databases(ROOT / "data")
         evaluation_storage.initialize(storage)
         yield

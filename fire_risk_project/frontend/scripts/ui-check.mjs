@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
+const server = await createServer({ configLoader: 'runner', server: { middlewareMode: true }, appType: 'custom' });
 const endpoint = process.env.UI_TEST_API || 'http://127.0.0.1:8000/api';
 async function post(path, body) {
   const r = await fetch(endpoint + path, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

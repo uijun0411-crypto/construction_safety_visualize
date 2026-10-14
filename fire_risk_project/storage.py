@@ -14,7 +14,12 @@ class StorageError(OSError):
 def configured_storage(storage_path=None):
     if storage_path is not None:
         return storage_path
-    return os.environ.get("DATABASE_URL") or Path(
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url and (os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV")):
+        raise StorageError(
+            "Vercel functions have ephemeral storage. Configure DATABASE_URL with a persistent Postgres database."
+        )
+    return database_url or Path(
         os.environ.get(
             "FIRE_RISK_STORAGE",
             Path(__file__).resolve().parent / "outputs/api_evaluations.sqlite3",

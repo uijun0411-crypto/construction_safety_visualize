@@ -7,6 +7,7 @@ import { AssessmentQuestionGroups, inputProgress } from './assessment-inputs';
 import Comparison from './comparison';
 import PreviousComparison from './previous-comparison';
 import { emptyMaterials } from './materials';
+import { buildWatcherAnswers } from './watcher-payload';
 
 const text = value => value == null ? '—' : typeof value === 'boolean' ? (value ? '예' : '아니오') : typeof value === 'object' ? JSON.stringify(value) : String(value);
 const score = value => value == null ? '미산정' : Number(value).toFixed(2);
@@ -38,7 +39,7 @@ function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    api('/questions', { answers, watcher_answers: Object.fromEntries(Object.entries(extras).filter(([,value])=>value)) }, controller.signal).then(data => { setSchema(data); setError(''); }).catch(e => {
+    api('/questions', { answers, watcher_answers: buildWatcherAnswers(extras, ['W001','W002','W003','W004']) }, controller.signal).then(data => { setSchema(data); setError(''); }).catch(e => {
       if (e.name !== 'AbortError') { setSchema(null); setError(e.message); }
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -53,7 +54,7 @@ function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
     if(answers.Q001==='있음'&&!materials.ids.length&&!materials.custom_names.length&&!materials.unknown){setError('주변 가연물 종류를 선택하거나 직접 입력 또는 가연물 종류 확인 필요를 선택하세요.');return;}
     setBusy(true); setError(''); setNotice('');
     requestId.current ||= crypto.randomUUID();
-    const watcherAnswers=Object.fromEntries(Object.entries(extras).filter(([id,value])=>value&&(id!=='W004'||schema?.watcher_context?.exception_required!==false)));
+    const watcherAnswers=buildWatcherAnswers(extras, (schema?.watcher_questions||[]).map(q=>q['추가질문ID']), schema?.watcher_context?.exception_required!==false);
     try { setCurrent(await api('/evaluate', { site_name: site, answers, materials, watcher_answers: watcherAnswers, watcher_ui_version: 'integrated-v1', request_id: requestId.current })); setSaved(true); setNotice('평가 완료 · 자동 저장됨'); onSaved(); onCompleted(); }
     catch (e) { setError(e.message); }
     finally { setBusy(false); }

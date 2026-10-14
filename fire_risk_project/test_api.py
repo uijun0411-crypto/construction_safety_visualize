@@ -1,6 +1,7 @@
 """Run: python -m unittest fire_risk_project.test_api -v"""
 from pathlib import Path
 from contextlib import closing
+import os
 import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
@@ -12,6 +13,16 @@ from fastapi.testclient import TestClient
 
 from .api import create_app
 from . import risk_engine as engine
+from . import storage as evaluation_storage
+
+
+class StorageConfigurationTests(unittest.TestCase):
+    def test_vercel_requires_persistent_postgres(self):
+        with patch.dict(os.environ, {"VERCEL": "1", "DATABASE_URL": ""}):
+            with self.assertRaisesRegex(evaluation_storage.StorageError, "persistent Postgres"):
+                evaluation_storage.configured_storage()
+        with patch.dict(os.environ, {"VERCEL": "1", "DATABASE_URL": "postgresql://db.example/app"}):
+            self.assertEqual(evaluation_storage.configured_storage(), "postgresql://db.example/app")
 
 
 class ApiTests(unittest.TestCase):

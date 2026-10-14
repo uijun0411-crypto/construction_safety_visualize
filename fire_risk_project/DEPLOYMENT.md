@@ -4,10 +4,14 @@
 
 ```text
 React + Vite (Vercel)
-  └─ HTTPS /api 요청 → FastAPI + Uvicorn (Render)
-                         ├─ risk_engine.py + data/*.csv: 계산·검증
-                         └─ SQLite: 평가 초안·저장 기록 (영구 디스크)
+  └─ HTTPS 요청 → FastAPI (Vercel Functions)
+                    ├─ risk_engine.py + data/*.csv: 계산·검증
+                    └─ Supabase/Postgres: 평가 초안·저장 기록
 ```
+
+Vercel 프로젝트 두 개가 같은 GitHub 저장소를 사용합니다. 하나는 화면,
+하나는 API를 배포합니다. API 프로젝트는 Vercel의 임시 파일시스템을 DB로
+사용하지 않으며 `DATABASE_URL`에 영구 Postgres 연결이 필요합니다.
 
 React는 입력과 화면 표시를 담당합니다. 조건부 질문, 평가, 저장, 검색,
 상세 조회, 비교, 현황 집계는 Python API를 사용합니다.
@@ -56,7 +60,7 @@ API는 시작 시 환경변수를 읽습니다. 변경 후 다시 실행하세�
 
 ## Supabase 저장소 사용
 
-Supabase 프로젝트에서 Postgres 연결 문자열을 만든 뒤 Render의 `DATABASE_URL`에 넣습니다.
+Supabase 프로젝트에서 Postgres 연결 문자열을 만든 뒤 API를 실행하는 환경의 `DATABASE_URL`에 넣습니다.
 연결 문자열에는 DB 비밀번호가 포함되므로 프런트엔드 `VITE_*` 변수에 넣지 마세요.
 
 API가 시작할 때 아래 테이블을 자동으로 생성합니다. 직접 만들고 싶다면 SQL Editor에서
@@ -88,47 +92,36 @@ $env:DATABASE_URL = 'postgresql://...'
 .\.venv\Scripts\python.exe -m uvicorn fire_risk_project.api:app --reload --host 127.0.0.1 --port 8000
 ```
 
-## 1. Python API를 Render에 배포
+## GitHub 저장소에서 Vercel에 배포
 
-저장소를 GitHub에 올린 다음 Render에서 **New → Blueprint**로 연결하고
-최상위 `render.yaml`을 사용합니다. 현재 설정은 **Free Web Service + Supabase Postgres**를
-전제로 합니다. 이 작업에서는 호스팅 리소스를 생성하지 않았습니다.
+FastAPI는 Vercel Python Functions에서 실행할 수 있습니다. 저장소에는 최상위
+`index.py`, `requirements.txt`, `vercel.json`을 추가했습니다. 현재 Vercel 화면
+프로젝트의 Root Directory가 `fire_risk_project/frontend`라면 그 프로젝트는
+그대로 화면용으로 유지하고, 같은 GitHub 저장소를 다시 가져와 API용 Vercel
+프로젝트를 하나 더 만듭니다.
 
-Blueprint의 `CORS_ORIGINS`에 실제 Vercel 주소를 입력합니다.
-예: `https://my-fire-risk.vercel.app` (경로와 마지막 `/` 없이).
-접속 키 `APP_ACCESS_KEY`는 Render가 생성합니다.
-
-New Web Service로 수동 생성한다면 아래 설정을 사용합니다.
+API 프로젝트 설정:
 
 | 설정 | 값 |
 | --- | --- |
-| Runtime | Python 3 |
-| Root Directory | 비움 (저장소 최상위) |
-| Build Command | `pip install -r fire_risk_project/requirements-api.txt` |
-| Start Command | `uvicorn fire_risk_project.api:app --host 0.0.0.0 --port $PORT --workers 1` |
-| Health Check Path | `/health` |
-| `PYTHON_VERSION` | `3.13.5` |
-| `DATABASE_URL` | Supabase Postgres 연결 문자열 |
-| `CORS_ORIGINS` | 실제 Vercel Origin |
-| `APP_ACCESS_KEY` | 관리자가 생성한 긴 무작위 접속 키 |
+| Root Directory | 저장소 최상위 (`.`) |
+| Framework | FastAPI 자동 감지 |
+| Build Command / Output Directory | 자동 감지 기본값 |
+| `DATABASE_URL` | 기존 평가 기록이 있는 영구 Postgres 연결 문자열 |
+| `APP_ACCESS_KEY` | 접속 키로 사용할 긴 임의 문자열 |
+| `CORS_ORIGINS` | `https://constructionsafetyvisualize.vercel.app` |
 
-배포 후 `https://서비스이름.onrender.com/health`에서 `{"status":"ok"}`를 확인합니다.
-Render 환경에서 접속 키가 없으면 API 시작을 거부합니다.
+`DATABASE_URL`은 Vercel API 프로젝트의 Environment Variables에만 입력합니다.
+프런트엔드 변수(`VITE_*`)에는 DB 주소나 접속 키를 넣지 마세요. 기존 기록을
+유지하려면 이전 API가 사용하던 것과 **동일한 Postgres 데이터베이스**를 연결해야
+합니다. 이전 저장소가 SQLite였다면 기존 기록은 별도로 내보내고 가져와야 합니다.
+Vercel 실행 환경에서 Postgres가 설정되지 않으면 SQLite로 조용히 넘어가지 않고
+API 시작을 거부합니다.
 
-`DATABASE_URL`을 설정하지 않으면 API는 SQLite 파일 저장으로 돌아갑니다. Render Free에서
-SQLite 파일을 쓰면 재배포·재시작 시 기록 보존을 기대하기 어렵습니다.
-기존 `evaluations_demo.sqlite3`는 자동으로 Supabase에 복사하지 않아 새 서버는 빈 기록으로 시작합니다.
-중요한 기록은 Supabase 백업 또는 별도 내보내기를 유지하세요.
+API 프로젝트를 배포한 다음 해당 프로젝트의 Vercel 도메인을 확인합니다. `/health`
+에서 `{"status":"ok"}`가 나오면 API가 준비된 것입니다.
 
-현재 접속 키는 팀 공용이며 키를 가진 사람은 저장 기록 전체를 볼 수 있습니다.
-사용자별 데이터 분리가 필요하면 사용자 인증과 권한을 추가해야 합니다.
-
-공식 문서: [FastAPI 배포](https://render.com/docs/deploy-fastapi),
-[영구 디스크](https://render.com/docs/disks), [Blueprint 설정](https://render.com/docs/blueprint-spec).
-
-## 2. React를 Vercel에 배포
-
-기존 Vercel 프로젝트를 아래처럼 설정하고 새 코드를 push한 뒤 재배포합니다.
+화면 프로젝트 설정:
 
 | 설정 | 값 |
 | --- | --- |
@@ -138,20 +131,22 @@ SQLite 파일을 쓰면 재배포·재시작 시 기록 보존을 기대하기 �
 | Build Command | `npm run build` |
 | Output Directory | `dist` |
 | Node.js | 22.x 또는 그 이상 지원 버전 |
-| Environment Variable | `VITE_API_BASE_URL=https://서비스이름.onrender.com` |
+| Environment Variable | `VITE_API_BASE_URL=https://API-프로젝트-도메인.vercel.app` |
 
 `VITE_API_BASE_URL`에는 `/api`를 붙이지 않습니다. Production 환경에 지정하고,
 Preview를 사용하면 해당 환경에도 지정합니다. Vite 변수는 빌드 시 반영되므로
 주소 변경 후 다시 배포합니다. Production에서 주소가 빠지면 화면에서 설정 오류를 안내합니다.
 
-Vercel 앱을 열고 Render의 `APP_ACCESS_KEY`를 접속 화면에 입력합니다.
+화면을 열고 API 프로젝트에 설정한 `APP_ACCESS_KEY`를 접속 화면에 입력합니다.
 키는 메모리에만 두며 새로고침하면 다시 입력합니다.
 **키를 `VITE_*` 변수에 넣지 마세요. 해당 값은 공개 JS에 포함됩니다.**
 
-Vercel 도메인 변경 시 Render의 `CORS_ORIGINS`도 변경합니다.
-여러 Origin은 쉼표로 구분합니다. 실제 사용하는 Production·Preview 주소만 추가합니다.
+화면 주소가 바뀌면 API 프로젝트의 `CORS_ORIGINS`도 실제 Origin에 맞춰 수정합니다.
+`VITE_API_BASE_URL`을 바꾸거나 환경변수를 추가한 경우 화면 프로젝트를 다시 배포합니다.
 
-공식 문서: [Vercel Vite](https://vercel.com/docs/frameworks/frontend/vite),
+공식 문서: [Vercel Python Functions](https://vercel.com/docs/functions/runtimes/python),
+[FastAPI on Vercel](https://vercel.com/kb/guide/ship-a-fastapi-app-on-vercel),
+[Vercel Vite](https://vercel.com/docs/frameworks/frontend/vite),
 [Vite 환경변수](https://vite.dev/guide/env-and-mode).
 
 ## API 요청 흐름
@@ -191,7 +186,7 @@ npm run build
 ## 문제 확인
 
 - Vercel `NOT_FOUND`: Root Directory, `dist` 출력 설정, 배포 브랜치의 frontend 파일을 확인합니다.
-- 서버 연결 실패: `/health`, API 주소, Render 상태, CORS Origin을 확인합니다.
-- 접속 키 오류: Render의 키와 입력한 키가 같은지 확인합니다.
-- 재배포 후 기록 없음: 저장 경로가 영구 디스크 아래인지 확인합니다.
+- 서버 연결 실패: API Vercel 프로젝트의 `/health`, `VITE_API_BASE_URL`, `CORS_ORIGINS`를 확인합니다.
+- 접속 키 오류: API Vercel 프로젝트의 `APP_ACCESS_KEY`와 입력한 키가 같은지 확인합니다.
+- 재배포 후 기록 없음: API Vercel 프로젝트가 기존 `DATABASE_URL`의 Postgres를 사용하는지 확인합니다.
 - Streamlit이 열림: React 주소(로컬 5173 또는 Vercel)를 엽니다. 8501은 기존 화면입니다.

@@ -19,6 +19,14 @@ export async function api(path, body, signal) {
   const data = await response.json().catch(() => null);
   if (!response.ok) {
     const detail = data?.detail;
+    if (response.status === 422 && Array.isArray(detail) && detail.some(item =>
+      item?.type === 'extra_forbidden' && item?.loc?.includes('watcher_answers')
+    )) {
+      const error = new Error('화면과 API 서버의 버전이 맞지 않습니다. 현재 API가 watcher_answers 입력을 지원하지 않습니다. VITE_API_BASE_URL이 최신 API를 가리키는지, API 배포가 완료됐는지 확인하세요.');
+      error.status = response.status;
+      error.code = 'API_VERSION_MISMATCH';
+      throw error;
+    }
     const error = new Error(Array.isArray(detail) ? detail.map(x => `${x.loc.join('.')}: ${x.msg}`).join('\n') : detail || `요청 실패 (${response.status})`);
     error.status = response.status;
     throw error;
