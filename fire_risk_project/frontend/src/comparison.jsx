@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { MaterialChange } from './materials';
 const number = v => typeof v === 'number' && Number.isFinite(v);
 const fmt = v => number(v) ? v.toFixed(1) : '미산정';
 const signed = v => `${v > 0 ? '+' : ''}${v.toFixed(1)}`;
@@ -55,5 +56,6 @@ export default function Comparison({ comparison }) {
     </section>
     <section><h3>가장 큰 변화</h3>{ranked.length ? ranked.filter(c=>Math.abs(c.delta)===Math.abs(ranked[0].delta)).map(c=><article className="change-card" key={c.row['항목ID']}><h4>{c.row['확인항목']}</h4><p>{fmt(contribution(c.row,'이전').value)} → {fmt(contribution(c.row,'이후').value)}</p><b>위험기여 {signed(c.delta)}</b></article>) : <p className="muted">수치로 비교할 수 있는 위험기여 변화가 없습니다.</p>}</section>
     <p className="muted">{info['해석']}</p>
+    <MaterialChange value={comparison['가연물변화']}/>
   </>;
 }

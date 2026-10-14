@@ -24,9 +24,9 @@ try {
   const numbers = [...initial.matchAll(/<em>(\d+)<\/em>/g)].map(m=>Number(m[1]));
   assert.deepEqual(numbers,numbers.map((_,i)=>i+1));
   const watchers = render(inputs.FireWatchConditions,{questions:schema.watcher_questions,extras:{},onChange:()=>{}});
-  assert.equal((watchers.match(/value="" selected=""/g)||[]).length,2);
+  assert.equal((watchers.match(/value="" selected=""/g)||[]).length,3);
   assert.doesNotMatch(watchers,/watch-W002|watch-W003/);
-  assert.match(watchers,/value="아니오">적용하지 않음/);
+  assert.match(watchers,/value="아니오">예외조건 미충족/);
   const absent = await post('/questions',{answers:{Q001:'없음'}});
   assert.equal(absent.questions.find(q=>q['항목ID']==='Q002')['적용상태'],'조건제외');
   const answers = {Q001:'있음',Q002:5,Q003:'미실시',Q004:'미배치',Q018:'용접방화포 미사용',Q019:'없음',Q020:'없음',Q025:'적정'};
@@ -34,9 +34,9 @@ try {
   assert.equal(present.questions.find(q=>q['항목ID']==='Q002')['적용상태'],'적용');
   const activeMarkup=render(inputs.AssessmentQuestionGroups,{schema:present,answers,onChange:()=>{}});
   assert.doesNotMatch(activeMarkup,/id="question-Q002"[^>]*disabled/);
-  const record=await post('/evaluate',{site_name:'UI 자동검증 (미저장)',answers,watcher_answers:{W001:'예',W002:'아니오',W003:'아니오',W004:'아니오'}});
+  const record=await post('/evaluate',{site_name:'임시 DB UI 자동검증',answers,watcher_ui_version:'integrated-v1',materials:{ids:['M008']},watcher_answers:{W001:'예',W002:'아니오',W003:'아니오',W004:'아니오'}});
   const markup=render(result.default,{record});
-  for(const title of ['위험요인 분석','위험기여도 TOP 5','필요한 조치','판단 근거','상세 계산내역 보기'])assert.ok(markup.includes(title),title);
+  for(const title of ['위험요인 분석','위험기여도 TOP 5','필요한 조치','판단 근거','화재감시자 배치 및 예외조건 확인','현장 가연물 정보','SikaCor Thinner-8'])assert.ok(markup.includes(title),title);
   assert.ok(markup.includes(record['요약']['위험지수'].toFixed(2)));
   assert.doesNotMatch(markup,/<details[^>]*open/);
   assert.doesNotMatch(markup,/NaN|undefined|강제경고 0건/);

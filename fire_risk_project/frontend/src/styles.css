@@ -47,3 +47,29 @@ a{color:#235d6b;text-underline-offset:3px}
 .state-badge.decrease { color: #216b60; background: #e7f4ef; }
 .state-badge.neutral { color: #536674; background: #edf1f4; }
 .question-group > .questions + .questions { margin-top: 16px; }
+.previous-comparison { min-width: 0; overflow-wrap: anywhere; }
+.previous-comparison .before-bar > div { background: #8d9eac; }
+.previous-comparison .table-wrap { max-width: 100%; overflow-x: auto; }
+.comparison-outcome { padding: 16px; background: #fff8eb; border-left: 3px solid #ee9c42; }
+.view-select { min-width: 0; max-width: 100%; }
+.view-select select { width: 100%; min-width: 0; text-overflow: ellipsis; }
+.integrated-watch-title { display: flex; align-items: baseline; gap: 10px; margin: 0 0 18px; font-size: 14px; }
+.integrated-watch-title em { font-style: normal; font-size: 12px; color: #71848f; background: #edf2f5; padding: 3px 6px; border-radius: 3px; }
+.watch-exception { margin-top: 18px; padding-top: 18px; border-top: 1px solid #e6ecef; }
+.integrated-watch .notice { font-size: 12px; padding: 12px; }
+.step-title small { overflow-wrap: anywhere; }
+.watcher-summary p { overflow-wrap: anywhere; }
+.material-picker { grid-column: 1 / -1; min-width: 0; }
+.material-picker h4 { margin: 0 0 12px; }
+.material-selection article { margin: 12px 0; padding: 16px; border: 1px solid #e1e8ec; border-radius: 8px; }
+.material-selected-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 12px 0; overflow-wrap: anywhere; }
+.material-selected-heading button { flex-shrink: 0; padding: 8px 12px; }
+.material-unknown { display: flex; align-items: center; gap: 10px; margin: 20px 0 8px; font-weight: 600; }
+.material-unknown input { width: auto; }
+.material-details { padding: 12px 0; overflow-wrap: anywhere; }
+.material-details dl { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 3fr); gap: 10px 16px; font-size: 13px; }
+.material-details dt { font-weight: 600; }.material-details dd { margin: 0; }
+.material-version { font-size: 11px; overflow-wrap: anywhere; color: #6d7f89; }
+.material-overview,.material-actions { margin-top: 24px; border-top: 1px solid #e6ecef; padding-top: 16px; overflow-wrap: anywhere; }
+.material-actions .action-card { margin: 12px 0; }
+@media(max-width:700px){.step-title{flex-wrap:wrap}.step-title small{flex-basis:100%}.material-details dl{grid-template-columns:1fr}.material-details dd{margin-bottom:8px}}

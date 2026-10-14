@@ -5,16 +5,22 @@ import json
 import logging
 import os
 import sqlite3
+import hashlib
+from datetime import datetime, timezone
+from uuid import UUID
 from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr, StrictBool
 
 from . import risk_engine as engine
 from . import storage as evaluation_storage
+from . import evaluation_history
+from . import watcher_input
+from . import materials
 
 ROOT = Path(__file__).resolve().parent
 
@@ -29,8 +35,22 @@ class Answers(BaseModel):
     answers: dict[str, StrictStr | StrictInt | StrictFloat | None] = Field(default_factory=dict, max_length=100)
 
 
+class MaterialSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ids: list[Annotated[StrictStr, Field(min_length=1, max_length=40)]] = Field(default_factory=list, max_length=50)
+    custom_names: list[Annotated[StrictStr, Field(min_length=1, max_length=200)]] = Field(default_factory=list, max_length=20)
+    unknown: StrictBool = False
+
+
 class EvaluationInput(Answers):
+    materials: MaterialSelection | None = None
+    watcher_ui_version: Literal["integrated-v1"] | None = None
+    request_id: UUID | None = None
     site_name: str = Field(min_length=1, max_length=200)
+    watcher_answers: dict[str, Literal["예", "아니오", "확인불가"]] = Field(default_factory=dict, max_length=4)
+
+
+class QuestionInput(Answers):
     watcher_answers: dict[str, Literal["예", "아니오", "확인불가"]] = Field(default_factory=dict, max_length=4)
 
 
@@ -91,17 +111,32 @@ def create_app(storage_path=None, access_key=None, origins=None):
     def session():
         return {"authenticated": True}
 
+    @app.get("/api/materials", dependencies=secured)
+    def material_catalogue():
+        try:
+            return materials.catalogue()
+        except materials.MaterialDataError as error:
+            raise HTTPException(503, str(error)) from error
+
     @app.post("/api/questions", dependencies=secured)
-    def questions(body: Answers):
+    def questions(body: QuestionInput):
         return {"questions": frame_rows(engine.get_prework_questions(body.task_id, body.answers)),
+                "watcher_context": watcher_input.context(body.task_id, body.answers, body.watcher_answers),
                 "watcher_questions": frame_rows(engine.watcher_questions[~engine.watcher_questions['추가질문ID'].isin(['W002', 'W003'])])}
 
     @app.post("/api/evaluate", dependencies=secured)
     def evaluate(body: EvaluationInput):
+        fingerprint = hashlib.sha256(json.dumps(body.model_dump(exclude={"request_id"}), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        identifier = str(body.request_id) if body.request_id else None
+        if identifier and evaluation_storage.saved_exists(storage, identifier):
+            existing = engine.load_evaluation(identifier, storage)
+            if existing.get("평가요청SHA256") != fingerprint:
+                raise HTTPException(409, "동일 요청 ID의 입력이 다릅니다. 새 평가를 진행하세요.")
+            return existing
         table = engine.get_prework_questions(body.task_id, body.answers)
         active = set(table.loc[table["적용상태"].eq("적용"), "항목ID"])
         answers = {qid: value for qid, value in body.answers.items() if qid in active}
-        if any(answers.get(qid) == "해당없음" for qid in ("Q003", "Q004")):
+        if answers.get("Q003") == "해당없음" or (not body.watcher_ui_version and answers.get("Q004") == "해당없음"):
             raise ValueError("Q003·Q004의 해당없음 근거는 아직 자동 검증하지 않습니다. 계산을 보류합니다. 실제 상태와 다르게 응답을 바꾸지 마세요.")
         if set(body.watcher_answers) - set(engine.watcher_questions["추가질문ID"]):
             raise ValueError("알 수 없는 화재감시자 추가질문입니다.")
@@ -110,8 +145,18 @@ def create_app(storage_path=None, access_key=None, origins=None):
         # including unknown, over potentially stale values from older clients.
         for wid, qid in (("W002", "Q019"), ("W003", "Q020")):
             watcher_answers[wid] = {"있음": "예", "없음": "아니오", "확인불가": "확인불가"}.get(answers.get(qid), "확인불가")
-        record = engine.build_evaluation(body.site_name, body.task_id, answers, watcher_answers)
-        evaluation_storage.save_draft(storage, record)
+        builder = watcher_input.build if body.watcher_ui_version else engine.build_evaluation
+        record = builder(body.site_name, body.task_id, answers, watcher_answers,
+                                         evaluation_id=identifier, evaluated_at=datetime.now(timezone.utc).isoformat(timespec="microseconds"))
+        record["평가요청SHA256"] = fingerprint
+        record["작업명"] = record["요약"].get("작업명") or next((r.get("세부작업") for r in frame_rows(engine.tasks) if r["작업ID"] == body.task_id), body.task_id)
+        record["근거스냅샷"] = {"standards": frame_rows(engine.standards), "accidents": frame_rows(engine.accidents)}
+        if body.materials is not None:
+            try:
+                record["가연물정보"] = materials.snapshot(answers, body.materials.model_dump())
+            except materials.MaterialDataError as error:
+                raise HTTPException(503, str(error)) from error
+        engine.save_evaluation(record, storage)
         return record
 
     @app.post("/api/evaluations/{evaluation_id}/save", dependencies=secured)
@@ -127,7 +172,11 @@ def create_app(storage_path=None, access_key=None, origins=None):
 
     @app.get("/api/evaluations", dependencies=secured)
     def history(site_keyword: str = Query(default="", max_length=200)):
-        return frame_rows(engine.search_evaluations(storage, site_keyword=site_keyword, task_id="H05"))
+        return evaluation_history.history(storage, site_keyword)
+
+    @app.get("/api/evaluations/{evaluation_id}/previous", dependencies=secured)
+    def previous(evaluation_id: str):
+        return {"comparison": evaluation_history.previous_comparison(engine.load_evaluation(evaluation_id, storage), storage)}
 
     @app.get("/api/evaluations/{evaluation_id}", dependencies=secured)
     def detail(evaluation_id: str):
@@ -135,8 +184,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
 
     @app.post("/api/compare", dependencies=secured)
     def compare(body: Comparison):
-        result = engine.compare_evaluations(body.before_id, body.after_id, storage)
-        return {name: value if isinstance(value, dict) else frame_rows(value) for name, value in result.items()}
+        return evaluation_history.compare(engine.load_evaluation(body.before_id, storage), engine.load_evaluation(body.after_id, storage))
 
     @app.get("/api/dashboard", dependencies=secured)
     def dashboard(site: str = Query(default="", max_length=200)):
