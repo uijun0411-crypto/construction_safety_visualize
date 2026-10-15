@@ -19,6 +19,7 @@ from urllib.request import urlopen
 KST = timezone(timedelta(hours=9))
 SOURCE = "https://www.data.go.kr/data/15084084/openapi.do"
 ENDPOINT = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtFcst"
+OBSERVATION_ENDPOINT = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst"
 CATALOGUE = json.loads((Path(__file__).parent / "data/kma-regions.json").read_text(encoding="utf-8"))
 REGIONS = {r["id"]: r for r in CATALOGUE["regions"]}
 _cache = {}
@@ -36,8 +37,48 @@ def region(identifier):
 
 
 def base_time(now):
+    return forecast_base_time(now)
+
+
+def forecast_base_time(now):
     # Official guide: hourly :30 issue is callable after :45 (KST).
     return (now.astimezone(KST) - timedelta(minutes=45)).replace(minute=30, second=0, microsecond=0)
+
+
+def observation_base_time(now):
+    # KMA hourly observation is available after minute 40.
+    return (now.astimezone(KST) - timedelta(minutes=40)).replace(minute=0, second=0, microsecond=0)
+
+
+def _number(values, code, low, high):
+    try:
+        value = float(values.get(code, ""))
+        return value if math.isfinite(value) and low <= value <= high else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _precipitation(value):
+    return {"0": "없음", "1": "비", "2": "비/눈", "3": "눈", "4": "소나기",
+            "5": "빗방울", "6": "빗방울눈날림", "7": "눈날림"}.get(str(value))
+
+
+def _rainfall(value):
+    if value in (None, "", "-999", "-998", "-999.0", "-998.0"):
+        return None
+    return value + " mm" if value.replace(".", "", 1).isdigit() else value
+
+
+def parse_observation(items, location, base, now):
+    matching = [r for r in items if isinstance(r, dict) and str(r.get("nx")) == str(location["nx"])
+                and str(r.get("ny")) == str(location["ny"])
+                and r.get("baseDate") == base.strftime("%Y%m%d") and r.get("baseTime") == base.strftime("%H%M")]
+    values = {r["category"]: str(r.get("obsrValue", "")) for r in matching if r.get("category")}
+    if not values:
+        raise WeatherError("선택 지역의 초단기실황 자료가 없습니다.")
+    return {"kind": "초단기실황", "temperature": _number(values, "T1H", -80, 60),
+            "humidity": _number(values, "REH", 0, 100), "precipitation": _precipitation(values.get("PTY")),
+            "rainfall": _rainfall(values.get("RN1")), "base_at": base.isoformat(), "valid_at": base.isoformat()}
 
 
 def parse_items(items, location, base, now):
@@ -52,24 +93,11 @@ def parse_items(items, location, base, now):
     if valid - now > timedelta(hours=6):
         raise WeatherError("기상예보의 대상시각을 확인할 수 없습니다.")
     values = {r["category"]: str(r.get("fcstValue", "")) for r in matching if r.get("fcstDate", "") + r.get("fcstTime", "") == target}
-    def number(code, low, high):
-        try:
-            v = float(values.get(code, ""))
-            return v if math.isfinite(v) and low <= v <= high else None
-        except ValueError:
-            return None
-    precipitation = {"0": "없음", "1": "비", "2": "비/눈", "3": "눈", "4": "소나기", "5": "빗방울", "6": "빗방울눈날림", "7": "눈날림"}.get(values.get("PTY"))
+    precipitation = _precipitation(values.get("PTY"))
     sky = {"1": "맑음", "3": "구름많음", "4": "흐림"}.get(values.get("SKY"))
-    rain = values.get("RN1")
-    if rain in (None, "", "-999", "-998", "-999.0", "-998.0"):
-        rain = None
-    elif rain.replace(".", "", 1).isdigit():
-        rain += " mm"
-    data = {"region": location, "kind": "초단기예보", "temperature": number("T1H", -80, 60),
-            "humidity": number("REH", 0, 100), "precipitation": precipitation, "rainfall": rain, "sky": sky,
-            "base_at": base.isoformat(), "valid_at": valid.isoformat(), "fetched_at": now.isoformat(),
-            "source": "기상청 단기예보 조회서비스", "source_url": SOURCE}
-    if all(data[k] is None for k in ("temperature", "humidity", "precipitation", "rainfall", "sky")):
+    data = {"kind": "초단기예보", "precipitation": precipitation, "sky": sky,
+            "base_at": base.isoformat(), "valid_at": valid.isoformat()}
+    if all(data[k] is None for k in ("precipitation", "sky")):
         raise WeatherError("기상청 응답에 표시 가능한 기상정보가 없습니다.")
     return data
 
@@ -80,9 +108,26 @@ def _sign(data, key):
     return payload + "." + signature
 
 
+def service_key():
+    # KMA_API_KEY is already set in the user's Vercel Production environment.
+    # KMA_SERVICE_KEY remains supported for deployments made before this fix.
+    return os.environ.get("KMA_API_KEY", "").strip() or os.environ.get("KMA_SERVICE_KEY", "").strip()
+
+
+def _api_items(endpoint, key, location, base):
+    params = {"serviceKey": unquote(key), "pageNo": 1, "numOfRows": 1000, "dataType": "JSON",
+              "base_date": base.strftime("%Y%m%d"), "base_time": base.strftime("%H%M"),
+              "nx": location["nx"], "ny": location["ny"]}
+    with urlopen(endpoint + "?" + urlencode(params), timeout=8) as response:
+        result = json.loads(response.read(2_000_000))["response"]
+    if str(result["header"]["resultCode"]) != "00":
+        raise WeatherError("기상청 인증·호출한도 또는 자료 발표시각을 확인할 수 없습니다.")
+    return result["body"]["items"]["item"]
+
+
 def restore(token, identifier):
     """Accept only a server-issued snapshot for the selected region; no live lookup."""
-    key = os.environ.get("KMA_SERVICE_KEY", "")
+    key = service_key()
     if not token or not key:
         return None
     try:
@@ -98,7 +143,7 @@ def restore(token, identifier):
 
 def fetch(identifier):
     location = region(identifier)
-    key = os.environ.get("KMA_SERVICE_KEY", "")
+    key = service_key()
     if not key:
         raise WeatherError("기상정보 연동이 설정되지 않았습니다. 관리자에게 연동 설정을 요청하세요. 평가는 계속할 수 있습니다.")
     # Cache is per warm instance, bounded by the finite region catalogue.
@@ -110,20 +155,23 @@ def fetch(identifier):
             data = deepcopy(cached[2])
         else:
             now = datetime.now(KST)
-            base = base_time(now)
-            params = {"serviceKey": unquote(key), "pageNo": 1, "numOfRows": 1000, "dataType": "JSON",
-                      "base_date": base.strftime("%Y%m%d"), "base_time": base.strftime("%H%M"),
-                      "nx": location["nx"], "ny": location["ny"]}
-            try:
-                with urlopen(ENDPOINT + "?" + urlencode(params), timeout=8) as response:
-                    result = json.loads(response.read(2_000_000))["response"]
-                if str(result["header"]["resultCode"]) != "00":
-                    raise WeatherError("기상청에서 자료를 제공하지 못했습니다. 인증키·호출한도 또는 자료 발표시각을 확인하세요.")
-                data = parse_items(result["body"]["items"]["item"], location, base, now)
-            except Exception as error:
-                # Never propagate upstream errors/URLs: they may contain the key.
-                message = str(error) if isinstance(error, WeatherError) else "기상정보 조회에 실패했습니다. 잠시 후 다시 조회하세요. 평가는 계속할 수 있습니다."
+            results, failures = {}, {}
+            for label, endpoint, base in (("observation", OBSERVATION_ENDPOINT, observation_base_time(now)),
+                                          ("forecast", ENDPOINT, forecast_base_time(now))):
+                try:
+                    rows = _api_items(endpoint, key, location, base)
+                    results[label] = (parse_observation(rows, location, base, now) if label == "observation"
+                                      else parse_items(rows, location, base, now))
+                except Exception as error:
+                    failures[label] = str(error) if isinstance(error, WeatherError) else "조회 실패"
+            if not results:
+                distinct = set(failures.values())
+                message = (next(iter(distinct)) if len(distinct) == 1 and "자료가 없습니다" not in next(iter(distinct))
+                           else "기상정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.")
                 _cache[identifier] = (time.monotonic(), 30, message)
-                raise WeatherError(message) from None
+                raise WeatherError(message)
+            data = {"region": location, "observed": results.get("observation"), "forecast": results.get("forecast"),
+                    "fetched_at": now.isoformat(), "source": "기상청 단기예보 조회서비스", "source_url": SOURCE,
+                    "warnings": failures}
             _cache[identifier] = (time.monotonic(), 600, deepcopy(data))
     return {"snapshot": data, "token": _sign(data, key)}

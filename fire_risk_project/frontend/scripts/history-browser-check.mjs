@@ -73,7 +73,7 @@ try {
   await new Promise((r,j)=>{socket.onopen=r;socket.onerror=j;});
   let serial=0; const pending=new Map(), errors=[];
   // Display fixture only; not a real KMA response and never saved as weather evidence.
-  const weatherFixture={snapshot:{region:{id:'1168000000',name:'서울특별시 강남구'},kind:'초단기예보',temperature:19,humidity:55,precipitation:'없음',rainfall:'강수없음',sky:'구름많음',base_at:'2026-10-15T13:30:00+09:00',valid_at:'2026-10-15T14:00:00+09:00',fetched_at:'2026-10-15T13:50:00+09:00',source:'기상청 단기예보 조회서비스 (테스트 응답)',source_url:'https://www.data.go.kr/data/15084084/openapi.do'},token:'display-fixture'};
+  const weatherFixture={snapshot:{region:{id:'1168000000',name:'서울특별시 강남구'},observed:{kind:'초단기실황',temperature:19,humidity:55,precipitation:'없음',rainfall:'0 mm',base_at:'2026-10-15T13:00:00+09:00',valid_at:'2026-10-15T13:00:00+09:00'},forecast:{kind:'초단기예보',precipitation:'없음',sky:'구름많음',base_at:'2026-10-15T13:30:00+09:00',valid_at:'2026-10-15T14:00:00+09:00'},fetched_at:'2026-10-15T13:50:00+09:00',source:'기상청 단기예보 조회서비스 (테스트 응답)',source_url:'https://www.data.go.kr/data/15084084/openapi.do',warnings:{}},token:'display-fixture'};
   socket.onmessage=event=>{const message=JSON.parse(event.data);if(message.method==='Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.text);if(message.method==='Fetch.requestPaused')void send('Fetch.fulfillRequest',{requestId:message.params.requestId,responseCode:message.params.request.url.includes('/api/weather?')?200:503,responseHeaders:[{name:'Content-Type',value:'application/json'}],body:Buffer.from(JSON.stringify(message.params.request.url.includes('/api/weather?')?weatherFixture:{detail:'검증용 MSDS 자료 읽기 실패'})).toString('base64')}).catch(error=>console.log('Cancelled intercepted request:',error.message)); if(message.id){const p=pending.get(message.id);pending.delete(message.id);message.error?p.reject(message.error):p.resolve(message.result);}};
   const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++serial;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));});
   const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw new Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
@@ -98,7 +98,7 @@ try {
   await click('기상정보 다시 조회');
   await until(()=>evaluate("document.querySelector('.weather-summary')?.textContent.includes('19 ℃')"),'weather forecast fixture');
   const weatherText=await evaluate("document.querySelector('.weather-summary').innerText");
-  for(const text of ['55 %','구름많음','강수없음','예보 발표','예보 대상','최근 자료 조회'])assert.ok(weatherText.includes(text),text);
+  for(const text of ['55 %','구름많음','0 mm','관측 기준시각','예보 발표시각','예보 대상시각','조회 시각'])assert.ok(weatherText.includes(text),text);
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'),true);
   const weatherClip=await evaluate("(()=>{const r=document.querySelector('.weather-card').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1};})()");

@@ -2,11 +2,16 @@
 
 ## 기상청 연동 추가 설정
 
-API 서버 환경변수 `KMA_SERVICE_KEY`에 공공데이터포털 **기상청 단기예보 조회서비스**의
+API 서버 환경변수 `KMA_API_KEY`에 공공데이터포털 **기상청 단기예보 조회서비스**의
 일반 인증키(Decoding 권장)를 등록합니다. `VITE_*` 변수나 브라우저 코드에는 넣지 않습니다.
 기상청 API허브 authKey와는 별개입니다. 백엔드는 `.env`를 자동으로 읽지 않으므로
 로컬은 API 실행 셸에 설정 후 재시작하고, Vercel은 백엔드 프로젝트 환경변수에 등록합니다.
 인증키 미설정/기상 조회 실패 시에도 기존 평가는 계속됩니다.
+
+기존 설정과의 호환을 위해 `KMA_SERVICE_KEY`도 계속 지원합니다. 두 값이 모두 있으면
+`KMA_API_KEY`를 우선 사용합니다. Vercel Production 환경변수를 변경한 뒤에는 API 프로젝트를
+재배포해야 새 값이 적용됩니다. API는 초단기실황(`getUltraSrtNcst`)과 초단기예보
+(`getUltraSrtFcst`)를 각각 요청하며, 관측시각과 예보 발표·대상시각을 분리해 저장합니다.
 
 `/api/weather/regions`와 `/api/weather?region_id=...`를 기존 API 호스트에서 제공합니다.
 공식 지역 JSON은 기존 `vercel.json`의 `data/**`에 포함됩니다. 기상은 참고자료로만
