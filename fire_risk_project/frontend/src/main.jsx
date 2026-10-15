@@ -1,3 +1,4 @@
+import { WeatherPicker } from './weather';
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, setAccessKey } from './api';
@@ -25,6 +26,7 @@ function Metrics({ items }) {
 
 function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
   const [site, setSite] = useState('');
+  const [weather, setWeather] = useState({region_id:'',snapshot:null,token:null});
   const [answers, setAnswers] = useState({});
   const [extras, setExtras] = useState({});
   const [materials, setMaterials] = useState(emptyMaterials);
@@ -55,7 +57,7 @@ function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
     setBusy(true); setError(''); setNotice('');
     requestId.current ||= crypto.randomUUID();
     const watcherAnswers=buildWatcherAnswers(extras, (schema?.watcher_questions||[]).map(q=>q['추가질문ID']), schema?.watcher_context?.exception_required!==false);
-    try { setCurrent(await api('/evaluate', { site_name: site, answers, materials, watcher_answers: watcherAnswers, watcher_ui_version: 'integrated-v1', request_id: requestId.current })); setSaved(true); setNotice('평가 완료 · 자동 저장됨'); onSaved(); onCompleted(); }
+    try { setCurrent(await api('/evaluate', { site_name: site, region_id: weather.region_id || null, weather_token: weather.token || null, answers, materials, watcher_answers: watcherAnswers, watcher_ui_version: 'integrated-v1', request_id: requestId.current })); setSaved(true); setNotice('평가 완료 · 자동 저장됨'); onSaved(); onCompleted(); }
     catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
@@ -66,10 +68,10 @@ function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
     finally { setBusy(false); }
   }
   const progress = inputProgress(schema,answers,extras,materials);
-  return <><div className="section-heading"><div><p className="eyebrow">PRE-WORK CHECK</p><h2>작업 시작 전 평가</h2><p className="muted">현장 상태를 확인하고 평가 기록을 남기세요.</p></div><span className="badge">H05 · 용접·용단</span></div>
+  return <><div className="section-heading"><div><p className="eyebrow">PRE-WORK CHECK</p><h2>작업 시작 전 평가</h2><p className="muted">현장 상태를 확인하고 평가 기록을 남기세요.</p></div><span className="badge">용접·용단</span></div>
     <form onSubmit={evaluate}><fieldset disabled={busy}>
-    <section className="panel"><div className="step-title"><span>01</span><h3>현장 정보</h3></div><label className="field">현장명<input value={site} maxLength={200} required placeholder="예: 서울 ○○ 신축공사" onChange={e => { invalidate(); setSite(e.target.value); }} /></label></section>
-    <section className="panel"><div className="step-title"><span>02</span><h3>위험 조건</h3><small aria-live="polite">{loading ? '질문 확인 중…' : `${progress.answered} / ${progress.total} 응답 (하위 입력 포함) · 미응답 ${progress.missing} · 확인 필요 ${progress.unknown} · 평가 제외 ${progress.excluded}`}</small></div>
+    <section className="panel"><div className="step-title"><span>01</span><h3>현장 정보</h3></div><label className="field">현장명<input value={site} maxLength={200} required placeholder="예: 서울 ○○ 신축공사" onChange={e => { invalidate(); setSite(e.target.value); }} /></label><WeatherPicker paused={busy || saved} value={weather} onChange={value=>{invalidate();setWeather(value);}} /></section>
+    <section className="panel"><div className="step-title"><span>02</span><h3>위험 조건</h3><small aria-live="polite">{loading ? '질문 확인 중…' : `${progress.answered} / ${progress.total} 응답 (하위 입력 포함) · 미응답 ${progress.missing} · 확인 필요 ${progress.unknown}`}</small></div>
     <details className="guide"><summary>거리 입력과 용접방화포 질문 안내</summary><p>현재 거리 점수는 11m 미만/이상으로 구분합니다. 화재감시자의 거리 관련 조건은 정확히 11m를 포함하는 ‘11m 이내’입니다. 거리만으로 배치 의무 전체를 판정하지 않습니다.</p><p>불티 비산방지조치 실시 여부와 용접방화포 사용 시 성능인증 여부를 각각 확인합니다. 다른 방법을 쓴다면 방화포 미사용으로 응답하되 실제 비산방지조치 상태도 확인하세요.</p></details>
     <AssessmentQuestionGroups schema={schema} answers={answers} extras={extras} materials={materials} onMaterialsChange={value=>{invalidate();setMaterials(value);}} onExtraChange={(id,value)=>{invalidate();setExtras(a=>({...a,[id]:value}));}} loading={loading} onChange={(id,value)=>{invalidate();if(id==='Q001'&&value!=='있음')setMaterials(emptyMaterials());setAnswers(a=>({...a,[id]:value}));}} />
     {!schema && !loading && <button type="button" onClick={() => setRetry(n => n + 1)}>질문 다시 불러오기</button>}</section>
@@ -107,7 +109,7 @@ function History({ revision, onSelect }) {
     catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
-  const label = r => `${date(r['평가일시'])} · ${r['현장명']} · ${r['평가ID'].slice(0, 8)}`;
+  const label = r => `${date(r['평가일시'])} · ${r['현장명']}`;
   return <><div className="section-heading"><div><p className="eyebrow">ASSESSMENT ARCHIVE</p><h2>저장 기록·비교</h2></div><button onClick={() => setRetry(n => n + 1)} disabled={busy}>새로고침</button></div><section className="panel"><label className="field">현장명 검색<input placeholder="현장명으로 검색" value={keyword} onChange={e => setKeyword(e.target.value)} /></label>{busy && <p role="status">불러오는 중…</p>}
     <div className="record-list">{rows.map(r => <button className="record-row" key={r['평가ID']} onClick={() => open(r['평가ID'])}><span><b>{r['현장명']}</b><small>{date(r['평가일시'])}</small></span><span><b>{score(r['위험지수'])}</b><small>{r['기본위험등급(잠정)']} · 잠정</small></span><span aria-hidden="true">↗</span></button>)}</div>{!rows.length && !busy && <p className="empty">검색 조건에 맞는 저장 기록이 없습니다.</p>}</section>
     {error && <p className="error" role="alert">{error}</p>}
@@ -176,8 +178,8 @@ function App() {
     catch (e) { setError(e.message); }
     finally { setChecking(false); }
   }
-  return <div className="app"><aside className="sidebar"><div className="brand"><span className="brand-icon">F</span><div>FIRE RISK<small>건설현장 화재 위험도</small></div></div><p className="nav-label">WORKSPACE</p><nav aria-label="주 메뉴">{[['new', '01', '새 평가'], ['dashboard', '02', '결과 대시보드'], ['history', '03', '저장 기록·비교']].map(([id, n, title]) => <button key={id} aria-current={tab === id ? 'page' : undefined} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}><span>{n}</span>{title}</button>)}</nav><div className="sidebar-bottom"><span className="status-dot" /> 작업 시작 전 평가<small>H05 · 용접·용단<br />규칙 기반 시험 평가</small></div></aside>
-    <div className="workspace"><header><span>현장 안전 관리 <b>/ 화재 위험도 평가</b></span><span className="header-tag">PRE-WORK</span></header><main><div className="notice global-notice"><b>잠정 평가 안내</b><span>법령·잔여 적용조건이 미검증되어 최종판정은 보류됩니다.</span></div>
+  return <div className="app"><aside className="sidebar"><div className="brand"><span className="brand-icon">F</span><div>FIRE RISK<small>건설현장 화재 위험도</small></div></div><p className="nav-label">WORKSPACE</p><nav aria-label="주 메뉴">{[['new', '01', '새 평가'], ['dashboard', '02', '결과 대시보드'], ['history', '03', '저장 기록·비교']].map(([id, n, title]) => <button key={id} aria-current={tab === id ? 'page' : undefined} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}><span>{n}</span>{title}</button>)}</nav><div className="sidebar-bottom"><span className="status-dot" /> 작업 시작 전 평가<small>용접·용단<br />규칙 기반 시험 평가</small></div></aside>
+    <div className="workspace"><header><span>현장 안전 관리 <b>/ 화재 위험도 평가</b></span><span className="header-tag">PRE-WORK</span></header><main>
     {!connected ? <form className="panel login" onSubmit={connect}><p className="eyebrow">WORKSPACE ACCESS</p><h2>{checking ? '연결 확인 중…' : '평가 서비스 접속'}</h2><label className="field">접속 키<input type="password" autoComplete="off" value={key} onChange={e => setKey(e.target.value)} placeholder="관리자에게 받은 접속 키" /></label><p className="muted">접속 키는 이 탭이 열려 있는 동안만 유지됩니다.</p>{error && <p role="alert" className="error">{error}</p>}<button className="primary" disabled={checking}>연결하기</button></form> : <>
       <div hidden={tab !== 'new'}><NewEvaluation current={current} setCurrent={setCurrent} onSaved={() => setRevision(n => n + 1)} onCompleted={() => { setSelected(null); setTab('dashboard'); }} /></div>
       {tab === 'dashboard' && <Dashboard current={current} selected={selected} revision={revision} />}

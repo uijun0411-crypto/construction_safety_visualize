@@ -21,6 +21,7 @@ from . import storage as evaluation_storage
 from . import evaluation_history
 from . import watcher_input
 from . import materials
+from . import weather
 
 ROOT = Path(__file__).resolve().parent
 
@@ -43,6 +44,8 @@ class MaterialSelection(BaseModel):
 
 
 class EvaluationInput(Answers):
+    region_id: str | None = Field(default=None, max_length=20)
+    weather_token: str | None = Field(default=None, max_length=12000)
     materials: MaterialSelection | None = None
     watcher_ui_version: Literal["integrated-v1"] | None = None
     request_id: UUID | None = None
@@ -118,6 +121,17 @@ def create_app(storage_path=None, access_key=None, origins=None):
         except materials.MaterialDataError as error:
             raise HTTPException(503, str(error)) from error
 
+    @app.get("/api/weather/regions", dependencies=secured)
+    def weather_regions():
+        return weather.CATALOGUE
+
+    @app.get("/api/weather", dependencies=secured)
+    def weather_lookup(region_id: str = Query(max_length=20)):
+        try:
+            return weather.fetch(region_id)
+        except weather.WeatherError as error:
+            raise HTTPException(503, str(error)) from None
+
     @app.post("/api/questions", dependencies=secured)
     def questions(body: QuestionInput):
         return {"questions": frame_rows(engine.get_prework_questions(body.task_id, body.answers)),
@@ -151,6 +165,11 @@ def create_app(storage_path=None, access_key=None, origins=None):
         record["평가요청SHA256"] = fingerprint
         record["작업명"] = record["요약"].get("작업명") or next((r.get("세부작업") for r in frame_rows(engine.tasks) if r["작업ID"] == body.task_id), body.task_id)
         record["근거스냅샷"] = {"standards": frame_rows(engine.standards), "accidents": frame_rows(engine.accidents)}
+        if body.region_id:
+            record["현장위치"] = weather.region(body.region_id)
+            record["기상정보"] = weather.restore(body.weather_token, body.region_id)
+            if record["기상정보"] is None:
+                record["기상정보안내"] = "평가 당시 저장된 기상정보가 없습니다."
         if body.materials is not None:
             try:
                 record["가연물정보"] = materials.snapshot(answers, body.materials.model_dump())

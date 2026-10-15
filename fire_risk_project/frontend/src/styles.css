@@ -73,3 +73,10 @@ a{color:#235d6b;text-underline-offset:3px}
 .material-overview,.material-actions { margin-top: 24px; border-top: 1px solid #e6ecef; padding-top: 16px; overflow-wrap: anywhere; }
 .material-actions .action-card { margin: 12px 0; }
 @media(max-width:700px){.step-title{flex-wrap:wrap}.step-title small{flex-basis:100%}.material-details dl{grid-template-columns:1fr}.material-details dd{margin-bottom:8px}}
+/* Weather follows the existing panel and field styles. */
+.weather-card { margin-top: 24px; padding-top: 18px; border-top: 1px solid #dbe2e5; }
+.weather-values { display: grid; grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); gap: 14px; }
+.weather-values dt { color: #708797; font-size: 13px; }
+.weather-values dd { margin: 6px 0 0; font-size: 18px; font-weight: 600; }
+.weather-summary { overflow-wrap: anywhere; }
+.provisional-note { font-size: 13px; }

@@ -8,7 +8,6 @@ const groups = [
 ];
 export function AssessmentQuestionGroups({schema,answers,extras={},onExtraChange=()=>{},onChange,loading,materials,onMaterialsChange}) {
  const questions=schema?.questions || [];
- const excluded=questions.filter(q=>q['적용상태']==='시점제외');
  const available=questions.filter(q=>q['적용상태']!=='시점제외');
  const known=new Set(groups.flatMap(g=>g[1]));
  let number=0;
@@ -18,7 +17,7 @@ export function AssessmentQuestionGroups({schema,answers,extras={},onExtraChange
  const startNumber=number;
  number+=rows.length+(i===0?(schema?.watcher_questions||[]).length:0);
  return <section className="question-group" key={title}><h4>{title}</h4><div className="questions">{rows.map((q,index)=><React.Fragment key={q['항목ID']}><ConditionalQuestion q={q} number={startNumber+index+1} value={answers[q['항목ID']]??''} onChange={onChange}/>{q['항목ID']==='Q002'&&materials&&<MaterialPicker enabled={answers.Q001==='있음'} value={materials} onChange={onMaterialsChange}/>}</React.Fragment>)}</div>{i===0&&<FireWatchConditions questions={schema?.watcher_questions} extras={extras} onChange={onExtraChange} startNumber={startNumber+rows.length} deployment={answers.Q004??''} onDeploymentChange={value=>onChange('Q004',value)} context={schema?.watcher_context}/>}</section>
- })}</div>{excluded.length>0&&<details className="guide"><summary>평가 제외 · {excluded.length}개 항목</summary>{excluded.map(q=><div key={q['항목ID']}><b>{q['확인항목']}</b><p>{q['제외사유']||q['사전안내']}</p><small>작업 시작 전 점수 계산에서 제외됩니다.</small></div>)}</details>}</>
+ })}</div></>
 }
 export function ConditionalQuestion({q,number,value,onChange}) {
  const id=q['항목ID'], disabled=q['적용상태']!=='적용';
