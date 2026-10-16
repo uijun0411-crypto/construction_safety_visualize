@@ -15,7 +15,7 @@ const statusColors={'0점':'#23786b','점수 발생':'#c66b24','확인필요':'#
 function WeatherConditionReview({review}) {
  if(!review)return null;
  return <section className="panel"><h3>기상조건 시범 검토</h3><p><b>{review['상태']}</b>{review['점수']!=null&&` · ${review['점수']} / ${review['최대점수']} 참고점`}</p>
-   {review['요인']?.length?<ul>{review['요인'].map((factor,index)=><li key={index}>{factor['요인']} · {factor['관측값']} · {factor['기준']}</li>)}</ul>:<p className="muted">기상 가산요인이 확인되지 않았거나 적용 조건을 충족하지 않았습니다.</p>}
+   {review['요인']?.length?<ul>{review['요인'].map((factor,index)=><li key={index}>{factor['요인']} · {factor['기상값']||factor['관측값']} · {factor['기준']}</li>)}</ul>:<p className="muted">기상 가산요인이 확인되지 않았거나 적용 조건을 충족하지 않았습니다.</p>}
    {review['자료누락']?.length>0&&<p className="muted">자료 미제공: {review['자료누락'].join(', ')}</p>}
    <p className="muted">{review['안내']}</p></section>;
 }

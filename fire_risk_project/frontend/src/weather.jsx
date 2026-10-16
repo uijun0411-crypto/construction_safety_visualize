@@ -4,14 +4,11 @@ const date=v=>v?new Date(v).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}):'자
 export function WeatherSummary({snapshot,location}) {
  if(!snapshot)return <p className="muted">{location?.name ? `${location.name} · ` : ''}평가 당시 저장된 기상정보가 없습니다.</p>;
  const observed=snapshot.observed,forecast=snapshot.forecast;
- return <div className="weather-summary"><p><b>{snapshot.region.name}</b> · 기상청 초단기실황·초단기예보 (참고자료)</p>
-   <h5>관측 실황 · {observed?.kind || '조회 자료 없음'}</h5>
-   <dl className="weather-values">{[['기온',observed?.temperature==null?null:`${observed.temperature} ℃`],['상대습도',observed?.humidity==null?null:`${observed.humidity} %`],['강수형태',observed?.precipitation],['1시간 강수량',observed?.rainfall]].map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value??'미제공'}</dd></div>)}</dl>
-   <p className="muted">관측 기준시각: {date(observed?.valid_at)} (한국시간)</p>
-   <h5>초단기예보 · {forecast?.kind || '조회 자료 없음'}</h5>
-   <dl className="weather-values">{[['예보 강수형태',forecast?.precipitation],['하늘 상태',forecast?.sky],['풍속',forecast?.wind_speed==null?null:`${forecast.wind_speed} m/s`],['풍향',forecast?.wind_direction==null?null:`${forecast.wind_direction}°`]].map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value??'미제공'}</dd></div>)}</dl>
+ return <div className="weather-summary"><p><b>{snapshot.region.name}</b> · 기상청 단기예보 (참고자료)</p>
+   {observed&&<><h5>기존 저장 실황 · {observed.kind}</h5><dl className="weather-values">{[['기온',observed.temperature==null?null:`${observed.temperature} ℃`],['상대습도',observed.humidity==null?null:`${observed.humidity} %`],['강수형태',observed.precipitation],['1시간 강수량',observed.rainfall]].map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value??'미제공'}</dd></div>)}</dl><p className="muted">실황 기준시각: {date(observed.valid_at)} (한국시간)</p></>}
+   <h5>단기예보 · {forecast?.kind || '조회 자료 없음'}</h5>
+   <dl className="weather-values">{[['기온',forecast?.temperature==null?null:`${forecast.temperature} ℃`],['상대습도',forecast?.humidity==null?null:`${forecast.humidity} %`],['강수형태',forecast?.precipitation],['강수확률',forecast?.precipitation_probability==null?null:`${forecast.precipitation_probability} %`],['강수량',forecast?.rainfall],['하늘 상태',forecast?.sky],['풍속',forecast?.wind_speed==null?null:`${forecast.wind_speed} m/s`],['풍향',forecast?.wind_direction==null?null:`${forecast.wind_direction}°`]].map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value??'미제공'}</dd></div>)}</dl>
    <p className="muted">예보 발표시각: {date(forecast?.base_at)}<br/>예보 대상시각: {date(forecast?.valid_at)}<br/>조회 시각: {date(snapshot.fetched_at)} (한국시간)</p>
-   {snapshot.warnings&&Object.keys(snapshot.warnings).length>0&&<p className="muted">일부 관측·예보 자료를 불러오지 못했습니다.</p>}
    <p className="muted">출처: <a href={snapshot.source_url} target="_blank" rel="noreferrer">{snapshot.source}</a> · 행정구역 대표 격자 기준이며 현장 실측값이 아닙니다.</p>
  </div>;
 }
@@ -38,5 +35,5 @@ export function WeatherPicker({value,onChange,paused=false}) {
  </div>{catalogueError&&<p className="error" role="alert">지역 목록 조회 실패: {catalogueError} <button type="button" onClick={()=>setCatalogueRetry(n=>n+1)}>다시 불러오기</button></p>}
   <div aria-live="polite">{busy&&<p role="status">기상정보 조회 중…</p>}{error&&<p className="error" role="alert">기상정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.<br/><small>{error}</small></p>}{value.snapshot&&<WeatherSummary snapshot={value.snapshot}/>}</div>
  <button type="button" disabled={!value.region_id||busy} onClick={()=>{onChange({...value,snapshot:null,token:null});setRetry(n=>n+1);}}>기상정보 다시 조회</button>
- <p className="muted">기상청 초단기실황과 초단기예보를 참고자료로 조회합니다. 관측과 예보의 기준시각을 따로 표시하며, 최대 10분간 조회 결과를 재사용합니다. 조회 실패 또는 조회 중에도 평가할 수 있고 완료된 자료만 저장됩니다.</p></div>;
+ <p className="muted">기상청 단기예보(getVilageFcst)를 참고자료로 조회합니다. 조회 실패 또는 조회 중에도 평가할 수 있고 완료된 자료만 저장됩니다.</p></div>;
 }
