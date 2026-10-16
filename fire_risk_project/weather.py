@@ -8,12 +8,14 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
+import logging
 import math
 import os
 from pathlib import Path
 from threading import Lock
 import time
 from urllib.parse import urlencode, unquote
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 KST = timezone(timedelta(hours=9))
@@ -120,11 +122,31 @@ def _api_items(endpoint, key, location, base):
     params = {"serviceKey": unquote(key), "pageNo": 1, "numOfRows": 1000, "dataType": "JSON",
               "base_date": base.strftime("%Y%m%d"), "base_time": base.strftime("%H%M"),
               "nx": location["nx"], "ny": location["ny"]}
-    with urlopen(endpoint + "?" + urlencode(params), timeout=8) as response:
-        result = json.loads(response.read(2_000_000))["response"]
-    if str(result["header"]["resultCode"]) != "00":
+    try:
+        with urlopen(endpoint + "?" + urlencode(params), timeout=8) as response:
+            payload = response.read(2_000_000)
+    except HTTPError as error:
+        # Do not include the URL or exception text: urllib's HTTPError URL contains
+        # the serviceKey query parameter.
+        if error.code in (401, 403):
+            raise WeatherError("기상청이 요청을 거부했습니다. 서비스 신청 상태와 일반 인증키를 확인하세요.") from None
+        if error.code == 429:
+            raise WeatherError("기상청 API 호출 한도를 초과했습니다. 잠시 후 다시 시도하세요.") from None
+        raise WeatherError(f"기상청 서버가 HTTP {error.code} 오류를 반환했습니다. 잠시 후 다시 시도하세요.") from None
+    except (URLError, TimeoutError, OSError):
+        raise WeatherError("기상청 서버에 연결하지 못했습니다. Render 로그와 네트워크 상태를 확인하세요.") from None
+    try:
+        response = json.loads(payload)
+        result = response["response"]
+        header = result["header"]
+    except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError):
+        raise WeatherError("기상청 응답 형식이 올바르지 않습니다. 인증키와 서비스 상태를 확인하세요.") from None
+    if str(header.get("resultCode")) != "00":
         raise WeatherError("기상청 인증·호출한도 또는 자료 발표시각을 확인할 수 없습니다.")
-    return result["body"]["items"]["item"]
+    try:
+        return result["body"]["items"]["item"]
+    except (KeyError, TypeError):
+        raise WeatherError("기상청 응답에 예보 자료가 없습니다. 자료 발표시각을 확인하세요.") from None
 
 
 def restore(token, identifier):
@@ -165,6 +187,12 @@ def fetch(identifier):
                     results[label] = (parse_observation(rows, location, base, now) if label == "observation"
                                       else parse_items(rows, location, base, now))
                 except Exception as error:
+                    # Never log the request URL or exception text: either may contain
+                    # credentials. Keep enough metadata to diagnose upstream failures.
+                    logging.warning(
+                        "KMA %s request failed: error_type=%s http_status=%s",
+                        label, type(error).__name__, getattr(error, "code", None),
+                    )
                     failures[label] = str(error) if isinstance(error, WeatherError) else "조회 실패"
             if not results:
                 distinct = set(failures.values())
