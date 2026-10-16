@@ -133,7 +133,16 @@ def _api_items(endpoint, key, location, base):
             error_payload = error.read(64_000)
             try:
                 error_data = json.loads(error_payload)
-                api_code = str(error_data["response"]["header"].get("resultCode", "")) or None
+                # KMA can return a normal response envelope, while the data.go.kr
+                # gateway wraps authentication failures in OpenAPI_ServiceResponse.
+                # Parse both so a gateway error such as reason code 30 is not
+                # collapsed into an unhelpful generic HTTP 403.
+                response_header = (error_data.get("response") or {}).get("header") or {}
+                gateway_header = ((error_data.get("OpenAPI_ServiceResponse") or {}).get("cmmMsgHeader") or {})
+                api_code = (str(response_header.get("resultCode", ""))
+                            or str(gateway_header.get("returnReasonCode", ""))
+                            or str(gateway_header.get("errMsg", ""))
+                            or None)
             except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError):
                 root = ET.fromstring(error_payload)
                 # data.go.kr gateway errors use returnReasonCode/returnAuthMsg;
@@ -146,7 +155,7 @@ def _api_items(endpoint, key, location, base):
             pass
         api_errors = {
             "20": "공공데이터포털에서 이 서비스의 이용 권한을 확인하지 못했습니다. 활용 신청 상태를 확인하세요.",
-            "30": "등록되지 않은 서비스키입니다. Render의 KMA_API_KEY 값을 확인하세요.",
+            "30": "공공데이터포털 오류 30: 요청에 포함된 serviceKey를 등록된 키로 인식하지 못했습니다. 포털 미리보기 요청과 앱 요청의 키 전달을 비교하세요.",
             "31": "서비스키 사용 기한이 만료됐습니다. 공공데이터포털에서 갱신하세요.",
             "SERVICE_ACCESS_DENIED_ERROR": "공공데이터포털에서 이 서비스의 이용 권한을 거부했습니다. 활용 신청 상태를 확인하세요.",
             "SERVICE_KEY_IS_NOT_REGISTERED_ERROR": "공공데이터포털이 등록되지 않은 serviceKey라고 응답했습니다. Render의 KMA_API_KEY를 확인하세요.",
