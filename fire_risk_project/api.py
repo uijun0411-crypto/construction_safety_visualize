@@ -22,6 +22,7 @@ from . import evaluation_history
 from . import watcher_input
 from . import materials
 from . import weather
+from . import weather_risk
 
 ROOT = Path(__file__).resolve().parent
 
@@ -46,6 +47,7 @@ class MaterialSelection(BaseModel):
 class EvaluationInput(Answers):
     region_id: str | None = Field(default=None, max_length=20)
     weather_token: str | None = Field(default=None, max_length=12000)
+    weather_exposure: Literal["실외", "실내", "확인불가"] = "확인불가"
     materials: MaterialSelection | None = None
     watcher_ui_version: Literal["integrated-v1"] | None = None
     request_id: UUID | None = None
@@ -168,6 +170,11 @@ def create_app(storage_path=None, access_key=None, origins=None):
         if body.region_id:
             record["현장위치"] = weather.region(body.region_id)
             record["기상정보"] = weather.restore(body.weather_token, body.region_id)
+            task_rows = engine.tasks.loc[engine.tasks["작업ID"] == body.task_id]
+            task_group = str(task_rows.iloc[0]["위험작업군"]) if not task_rows.empty else ""
+            record["기상조건검토"] = weather_risk.assess(
+                record["기상정보"], task_group, answers, body.weather_exposure
+            )
             if record["기상정보"] is None:
                 record["기상정보안내"] = "평가 당시 저장된 기상정보가 없습니다."
         if body.materials is not None:

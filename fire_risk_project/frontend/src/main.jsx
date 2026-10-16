@@ -26,7 +26,7 @@ function Metrics({ items }) {
 
 function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
   const [site, setSite] = useState('');
-  const [weather, setWeather] = useState({region_id:'',snapshot:null,token:null});
+  const [weather, setWeather] = useState({region_id:'',snapshot:null,token:null,exposure:'확인불가'});
   const [answers, setAnswers] = useState({});
   const [extras, setExtras] = useState({});
   const [materials, setMaterials] = useState(emptyMaterials);
@@ -57,7 +57,7 @@ function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
     setBusy(true); setError(''); setNotice('');
     requestId.current ||= crypto.randomUUID();
     const watcherAnswers=buildWatcherAnswers(extras, (schema?.watcher_questions||[]).map(q=>q['추가질문ID']), schema?.watcher_context?.exception_required!==false);
-    try { setCurrent(await api('/evaluate', { site_name: site, region_id: weather.region_id || null, weather_token: weather.token || null, answers, materials, watcher_answers: watcherAnswers, watcher_ui_version: 'integrated-v1', request_id: requestId.current })); setSaved(true); setNotice('평가 완료 · 자동 저장됨'); onSaved(); onCompleted(); }
+    try { setCurrent(await api('/evaluate', { site_name: site, region_id: weather.region_id || null, weather_token: weather.token || null, weather_exposure: weather.exposure || '확인불가', answers, materials, watcher_answers: watcherAnswers, watcher_ui_version: 'integrated-v1', request_id: requestId.current })); setSaved(true); setNotice('평가 완료 · 자동 저장됨'); onSaved(); onCompleted(); }
     catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }

@@ -96,6 +96,8 @@ def parse_items(items, location, base, now):
     precipitation = _precipitation(values.get("PTY"))
     sky = {"1": "맑음", "3": "구름많음", "4": "흐림"}.get(values.get("SKY"))
     data = {"kind": "초단기예보", "precipitation": precipitation, "sky": sky,
+            "wind_speed": _number(values, "WSD", 0, 100),
+            "wind_direction": _number(values, "VEC", 0, 360),
             "base_at": base.isoformat(), "valid_at": valid.isoformat()}
     if all(data[k] is None for k in ("precipitation", "sky")):
         raise WeatherError("기상청 응답에 표시 가능한 기상정보가 없습니다.")
