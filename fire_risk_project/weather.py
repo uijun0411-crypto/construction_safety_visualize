@@ -20,9 +20,9 @@ from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 KST = timezone(timedelta(hours=9))
-SOURCE = "https://apihub.kma.go.kr/apiList.do?seqApi=10"
-ENDPOINT = "https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstInfoService_2.0/getUltraSrtFcst"
-OBSERVATION_ENDPOINT = "https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstInfoService_2.0/getUltraSrtNcst"
+SOURCE = "https://www.data.go.kr/data/15084084/openapi.do"
+ENDPOINT = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtFcst"
+OBSERVATION_ENDPOINT = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst"
 CATALOGUE = json.loads((Path(__file__).parent / "data/kma-regions.json").read_text(encoding="utf-8"))
 REGIONS = {r["id"]: r for r in CATALOGUE["regions"]}
 _cache = {}
@@ -114,12 +114,12 @@ def _sign(data, key):
 
 
 def service_key():
-    # KMA_API_KEY is the KMA API Hub authKey (not a data.go.kr serviceKey).
-    return os.environ.get("KMA_API_KEY", "").strip()
+    # KMA_API_KEY/KMA_SERVICE_KEY are data.go.kr serviceKey values.
+    return os.environ.get("KMA_API_KEY", "").strip() or os.environ.get("KMA_SERVICE_KEY", "").strip()
 
 
 def _api_items(endpoint, key, location, base):
-    params = {"authKey": unquote(key), "pageNo": 1, "numOfRows": 1000, "dataType": "JSON",
+    params = {"serviceKey": unquote(key), "pageNo": 1, "numOfRows": 1000, "dataType": "JSON",
               "base_date": base.strftime("%Y%m%d"), "base_time": base.strftime("%H%M"),
               "nx": location["nx"], "ny": location["ny"]}
     try:
@@ -127,7 +127,7 @@ def _api_items(endpoint, key, location, base):
             payload = response.read(2_000_000)
     except HTTPError as error:
         # Do not include the URL or exception text: urllib's HTTPError URL contains
-        # the authKey query parameter.
+        # the serviceKey query parameter.
         api_code = None
         try:
             error_payload = error.read(64_000)
@@ -145,19 +145,19 @@ def _api_items(endpoint, key, location, base):
             # The gateway may return an HTML or empty error page.
             pass
         api_errors = {
-            "20": "기상청에서 이 서비스의 이용 권한을 확인하지 못했습니다. 해당 서비스의 활용 신청 상태를 확인하세요.",
-            "30": "기상청에서 등록되지 않은 인증키라고 응답했습니다. Render의 KMA_API_KEY가 해당 서비스의 일반 인증키인지 확인하세요.",
-            "31": "기상청 인증키 사용 기한이 만료됐습니다. 공공데이터포털에서 갱신하세요.",
-            "SERVICE_ACCESS_DENIED_ERROR": "기상청에서 이 서비스의 이용 권한을 거부했습니다. 해당 서비스의 활용 신청 계정과 키를 확인하세요.",
-            "SERVICE_KEY_IS_NOT_REGISTERED_ERROR": "기상청이 인증키를 등록되지 않은 키로 판단했습니다. Render의 KMA_API_KEY 값을 확인하세요.",
-            "DEADLINE_HAS_EXPIRED_ERROR": "기상청 인증키 사용 기한이 만료됐습니다. 공공데이터포털에서 이용 기간을 갱신하세요.",
-            "29": "기상청이 Render 서버의 IP를 차단했습니다. 공공데이터포털 활용지원센터에 차단 여부를 문의해야 합니다.",
-            "BLACKLIST_IP_ACCESS_ERROR": "기상청이 Render 서버의 IP를 차단했습니다. 공공데이터포털 활용지원센터에 차단 여부를 문의해야 합니다.",
+            "20": "공공데이터포털에서 이 서비스의 이용 권한을 확인하지 못했습니다. 활용 신청 상태를 확인하세요.",
+            "30": "등록되지 않은 서비스키입니다. Render의 KMA_API_KEY 값을 확인하세요.",
+            "31": "서비스키 사용 기한이 만료됐습니다. 공공데이터포털에서 갱신하세요.",
+            "SERVICE_ACCESS_DENIED_ERROR": "공공데이터포털에서 이 서비스의 이용 권한을 거부했습니다. 활용 신청 상태를 확인하세요.",
+            "SERVICE_KEY_IS_NOT_REGISTERED_ERROR": "공공데이터포털이 등록되지 않은 serviceKey라고 응답했습니다. Render의 KMA_API_KEY를 확인하세요.",
+            "DEADLINE_HAS_EXPIRED_ERROR": "serviceKey 사용 기한이 만료됐습니다. 공공데이터포털에서 이용 기간을 갱신하세요.",
+            "29": "공공데이터포털이 Render 서버 IP를 차단했습니다. 활용지원센터에 문의하세요.",
+            "BLACKLIST_IP_ACCESS_ERROR": "공공데이터포털이 Render 서버 IP를 차단했습니다. 활용지원센터에 문의하세요.",
         }
         if api_code in api_errors:
             raise WeatherError(api_errors[api_code]) from None
         if error.code in (401, 403):
-            raise WeatherError(f"기상청이 요청을 거부했습니다 (HTTP {error.code}). 공공데이터포털 인증키와 서비스 이용 권한을 확인하세요.") from None
+            raise WeatherError(f"공공데이터포털이 요청을 거부했습니다 (HTTP {error.code}). serviceKey와 서비스 이용 권한을 확인하세요.") from None
         if error.code == 429:
             raise WeatherError("기상청 API 호출 한도를 초과했습니다. 잠시 후 다시 시도하세요.") from None
         raise WeatherError(f"기상청 서버가 HTTP {error.code} 오류를 반환했습니다. 잠시 후 다시 시도하세요.") from None
@@ -169,17 +169,17 @@ def _api_items(endpoint, key, location, base):
         header = result["header"]
     except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError):
         raise WeatherError("기상청 응답 형식이 올바르지 않습니다. 인증키와 서비스 상태를 확인하세요.") from None
-    # KMA API Hub reports success as "0" (the data.go.kr gateway uses "00").
+    # Accept both documented KMA response success code forms.
     if str(header.get("resultCode")) not in {"0", "00"}:
         code = str(header.get("resultCode", ""))
         message = str(header.get("resultMsg", ""))
         if code in {"30", "31"} or "AUTH" in message.upper() or "KEY" in message.upper():
-            raise WeatherError("기상청 API허브가 authKey를 거부했습니다. Render의 KMA_API_KEY에 API허브 인증키가 설정됐는지 확인하세요.")
-        raise WeatherError("기상청 API허브 응답 오류입니다. 발표시각, 호출한도 또는 API허브 응답을 확인하세요.")
+            raise WeatherError("공공데이터포털이 serviceKey를 거부했습니다. Render의 KMA_API_KEY에 해당 서비스의 일반 인증키가 설정됐는지 확인하세요.")
+        raise WeatherError("공공데이터포털 응답 오류입니다. 발표시각, 호출한도 또는 API 응답을 확인하세요.")
     try:
         return result["body"]["items"]["item"]
     except (KeyError, TypeError):
-        raise WeatherError("기상청 응답에 예보 자료가 없습니다. 자료 발표시각을 확인하세요.") from None
+        raise WeatherError("공공데이터포털 응답에 예보 자료가 없습니다. 자료 발표시각을 확인하세요.") from None
 
 
 def restore(token, identifier):
@@ -229,8 +229,12 @@ def fetch(identifier):
                     failures[label] = str(error) if isinstance(error, WeatherError) else "조회 실패"
             if not results:
                 distinct = set(failures.values())
-                message = (next(iter(distinct)) if len(distinct) == 1 and "자료가 없습니다" not in next(iter(distinct))
-                           else "기상정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.")
+                rejected = next((message for message in failures.values()
+                                 if "공공데이터포털이 요청을 거부했습니다" in message
+                                 or "serviceKey를 거부했습니다" in message), None)
+                message = (rejected or
+                           (next(iter(distinct)) if len(distinct) == 1 and "자료가 없습니다" not in next(iter(distinct))
+                            else "기상정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."))
                 _cache[identifier] = (time.monotonic(), 30, message)
                 raise WeatherError(message)
             data = {"region": location, "observed": results.get("observation"), "forecast": results.get("forecast"),
