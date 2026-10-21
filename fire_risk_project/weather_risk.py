@@ -31,20 +31,27 @@ def assess(snapshot, task_group, answers, exposure):
     forecast = snapshot.get("forecast") or {}
     factors = []
     missing = []
+    # The configured source is the village short-term forecast, not an
+    # observation endpoint. Keep compatibility with older snapshots that have
+    # observed values, while using forecast values for new snapshots.
     humidity = observed.get("humidity")
+    if not isinstance(humidity, (int, float)):
+        humidity = forecast.get("humidity")
     temperature = observed.get("temperature")
+    if not isinstance(temperature, (int, float)):
+        temperature = forecast.get("temperature")
     wind = forecast.get("wind_speed")
 
     # Draft thresholds for discussion only; they are not regulatory limits or validated predictors.
     if isinstance(humidity, (int, float)) and humidity <= 30:
-        factors.append({"요인": "낮은 상대습도", "관측값": f"{humidity}%", "점수": 1,
+        factors.append({"요인": "낮은 상대습도", "기상값": f"{humidity}%", "점수": 1,
                         "기준": "시범 기준: 상대습도 30% 이하"})
     elif not isinstance(humidity, (int, float)):
         missing.append("상대습도")
     if isinstance(temperature, (int, float)) and temperature >= 30 and (
         "인화성물질" in groups or "가열·열원" in groups
     ):
-        factors.append({"요인": "높은 기온", "관측값": f"{temperature}℃", "점수": 1,
+        factors.append({"요인": "높은 기온", "기상값": f"{temperature}℃", "점수": 1,
                         "기준": "시범 기준: 기온 30℃ 이상, 인화성물질·가열 작업군에만 적용"})
     elif not isinstance(temperature, (int, float)) and (
         "인화성물질" in groups or "가열·열원" in groups
@@ -53,7 +60,7 @@ def assess(snapshot, task_group, answers, exposure):
     if isinstance(wind, (int, float)) and wind >= 5 and any(
         term in groups for term in ("화기", "불티", "마찰·절삭")
     ):
-        factors.append({"요인": "강한 바람", "관측값": f"{wind}m/s", "점수": 1,
+        factors.append({"요인": "강한 바람", "기상값": f"{wind}m/s", "점수": 1,
                         "기준": "시범 기준: 풍속 5m/s 이상, 야외 불티 작업군에만 적용"})
     elif not isinstance(wind, (int, float)) and any(
         term in groups for term in ("화기", "불티", "마찰·절삭")
