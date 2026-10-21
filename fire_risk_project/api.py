@@ -393,6 +393,89 @@ def create_app(storage_path=None, access_key=None, origins=None):
                            "작업ID": record["작업ID"], "위험지수": record["요약"]["위험지수"],
                            "위험수준": record["요약"]["기본위험등급(잠정)"]} for record in records]}
 
+    def zone_reassessment_input(record):
+        saved = record.get("입력조건")
+        if saved:
+            return saved
+        watcher_answers = {}
+        for row in record.get("화재감시자응답") or []:
+            answer = row.get("응답")
+            if row.get("추가질문ID") and answer in ("예", "아니오", "확인불가"):
+                watcher_answers[row["추가질문ID"]] = answer
+        material = record.get("가연물정보") or {}
+        return {"site_name": record.get("현장명", ""), "task_id": record.get("작업ID", "H05"),
+                "answers": record.get("응답", {}), "watcher_answers": watcher_answers,
+                "materials": {"ids": [row.get("물질ID") for row in material.get("선택물질", []) if row.get("물질ID")],
+                              "custom_names": [row.get("물질명") for row in material.get("직접입력", []) if row.get("물질명")],
+                              "unknown": bool(material.get("종류확인필요"))},
+                "weather_region_id": (record.get("현장위치") or {}).get("id"),
+                "weather_exposure": record.get("기상노출", "확인불가")}
+
+    def zone_comparison(before, after):
+        if before.get("작업구역ID") != after.get("작업구역ID"):
+            raise ValueError("같은 작업구역의 평가만 비교할 수 있습니다.")
+        if before.get("작업ID") != after.get("작업ID"):
+            from . import materials as material_module
+            reason = "작업 종류가 달라 위험지수와 항목별 기여도를 직접 비교할 수 없습니다."
+            return {"가연물변화": material_module.comparison(before, after),
+                    "비교안내": {"점수차이표시가능": False, "위험지수차이(이후-이전)": None,
+                                "변화상태": "판정 보류", "비교제한사유": reason,
+                                "해석": "작업 종류가 다릅니다. 각 평가의 위험지수와 조건을 따로 확인하세요."},
+                    "평가요약": [{**{k: r.get(k) for k in ("평가ID", "평가일시", "현장명", "작업ID", "작업명")},
+                                  **r.get("요약", {}), "구분": label} for label, r in (("이전", before), ("이후", after))],
+                    "전체항목": [], "변경항목": [], "추가응답변경": [], "화재감시자검토": []}
+        return evaluation_history.compare(before, after)
+
+    def previous_zone_record(record):
+        history = evaluation_storage.list_all_zone_assessments(storage, record["현장ID"])
+        candidates = [item for item in history
+                      if item.get("현장ID") == record.get("현장ID")
+                      and item.get("작업구역ID") == record.get("작업구역ID")
+                      and item["평가ID"] != record["평가ID"]
+                      and evaluation_history.order(item) < evaluation_history.order(record)]
+        if not candidates:
+            return None
+        previous_id = record.get("이전구역평가ID")
+        previous = next((item for item in candidates if item["평가ID"] == previous_id), None)
+        if previous is None:
+            previous = max(candidates, key=evaluation_history.order)
+        return previous
+
+    @app.get("/api/zone-assessments", dependencies=secured)
+    def zone_assessment_history(site_id: UUID | None = None, site_keyword: str = Query(default="", max_length=200)):
+        records = evaluation_storage.list_all_zone_assessments(storage, str(site_id) if site_id else None)
+        keyword = " ".join(site_keyword.casefold().split())
+        rows = []
+        for record in records:
+            if keyword and keyword not in " ".join(record.get("현장명", "").casefold().split()):
+                continue
+            summary = record.get("요약", {})
+            image = record.get("현장조감도") or {}
+            rows.append({"평가ID": record["평가ID"], "현장ID": record.get("현장ID"), "현장명": record.get("현장명"),
+                         "이미지ID": image.get("이미지ID"), "이미지버전": image.get("버전"),
+                         "작업구역ID": record.get("작업구역ID"), "작업구역명": record.get("작업구역명"),
+                         "작업구역좌표": record.get("작업구역좌표"), "평가일시": record.get("평가일시"),
+                         "작업ID": record.get("작업ID"), "작업명": record.get("작업명"),
+                         "위험지수": summary.get("위험지수"), "위험수준": summary.get("기본위험등급(잠정)"),
+                         "이전구역평가ID": record.get("이전구역평가ID")})
+        return {"평가이력": rows}
+
+    @app.get("/api/zone-assessments/{evaluation_id}/previous", dependencies=secured)
+    def zone_assessment_previous(evaluation_id: UUID):
+        record = evaluation_storage.zone_assessment_by_id(storage, str(evaluation_id))
+        if record is None:
+            raise HTTPException(404, "구역 평가기록을 찾을 수 없습니다.")
+        previous = previous_zone_record(record)
+        return {"이전평가ID": previous["평가ID"] if previous else None,
+                "comparison": zone_comparison(previous, record) if previous else None}
+
+    @app.get("/api/zone-assessments/{evaluation_id}", dependencies=secured)
+    def zone_assessment_history_detail(evaluation_id: UUID):
+        record = evaluation_storage.zone_assessment_by_id(storage, str(evaluation_id))
+        if record is None:
+            raise HTTPException(404, "구역 평가기록을 찾을 수 없습니다.")
+        return {"평가": record, "재평가입력": zone_reassessment_input(record)}
+
     @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessments/{evaluation_id}", dependencies=secured)
     def zone_assessment_version(site_id: UUID, image_id: UUID, zone_id: UUID, evaluation_id: UUID):
         require_zone(site_id, image_id, zone_id)
@@ -400,7 +483,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
                        if item["평가ID"] == str(evaluation_id)), None)
         if record is None:
             raise HTTPException(404, "작업구역 평가기록을 찾을 수 없습니다.")
-        return {"평가": record}
+        return {"평가": record, "재평가입력": zone_reassessment_input(record)}
 
     @app.put("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessment", dependencies=secured)
     def save_zone_assessment_draft(site_id: UUID, image_id: UUID, zone_id: UUID, body: ZoneAssessmentInput):
@@ -437,12 +520,18 @@ def create_app(storage_path=None, access_key=None, origins=None):
                          evaluation_id=identifier, evaluated_at=datetime.now(timezone.utc).isoformat(timespec="microseconds"))
         image = evaluation_storage.site_blueprint_metadata(storage, str(site_id), str(image_id))
         record.update({"현장ID": str(site_id), "작업구역ID": str(zone_id), "작업구역명": zone["name"],
+                       "작업구역좌표": zone["coordinates"],
                        "현장조감도": blueprint_result(image), "작업명": task["세부작업"],
                        "대공정": task["대공정"], "세부공정": task["세부공정"],
                        "화재위험지수": record["요약"]["위험지수"],
                        "위험수준": record["요약"]["기본위험등급(잠정)"],
                        "점수계산기준": {"계산데이터SHA256": record["계산데이터SHA256"], "엔진SHA256": record["엔진SHA256"]},
                        "입력SHA256": zone_fingerprint(body),
+                       "입력조건": {"site_name": body.site_name, "task_id": body.task_id,
+                                   "answers": body.answers, "watcher_answers": body.watcher_answers,
+                                   "materials": body.materials.model_dump(),
+                                   "weather_region_id": body.weather_region_id,
+                                   "weather_exposure": body.weather_exposure},
                        "이전구역평가ID": previous["평가ID"] if previous else None,
                        "근거스냅샷": {"standards": frame_rows(engine.standards), "accidents": frame_rows(engine.accidents)}})
         if body.weather_region_id:

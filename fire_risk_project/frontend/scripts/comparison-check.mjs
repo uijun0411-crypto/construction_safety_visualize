@@ -3,7 +3,7 @@ import { createServer } from 'vite';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-const server = await createServer({server:{middlewareMode:true},appType:'custom'});
+const server = await createServer({configLoader:'runner',server:{middlewareMode:true},appType:'custom'});
 try {
   const {default: Comparison, changeState, contribution} = await server.ssrLoadModule('/src/comparison.jsx');
   const row = {'항목ID':'Q020','확인항목':'반대면 가연물 우려',

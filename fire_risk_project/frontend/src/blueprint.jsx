@@ -38,7 +38,7 @@ function readFile(file) {
   });
 }
 
-export default function BlueprintUpload({ siteId, onChange = () => {}, onReady = () => {}, onZoneChange = () => {} }) {
+export default function BlueprintUpload({ siteId, initialImageId = '', initialZoneId = '', onChange = () => {}, onReady = () => {}, onZoneChange = () => {} }) {
   const [image, setImage] = useState(null);
   const [preview, setPreview] = useState('');
   const [pending, setPending] = useState(null);
@@ -62,14 +62,17 @@ export default function BlueprintUpload({ siteId, onChange = () => {}, onReady =
     const response = await api(`/sites/${encodeURIComponent(siteId)}/blueprints/${encodeURIComponent(imageId)}/zones`, undefined, signal);
     const next = response['작업구역'].map(zoneRecord);
     setZones(next);
-    setSelectedZoneId(current => next.some(zone => zone.zone_id === current) ? current : '');
+    setSelectedZoneId(current => next.some(zone => zone.zone_id === current) ? current : next.some(zone => zone.zone_id === initialZoneId) ? initialZoneId : '');
     return next;
   }
 
   useEffect(() => {
     const controller = new AbortController();
     setImage(null); setPreview(''); setPending(null); setError(''); setZoom(1);
-    api(`/sites/${encodeURIComponent(siteId)}/blueprint`, undefined, controller.signal)
+    const imagePath = initialImageId
+      ? `/sites/${encodeURIComponent(siteId)}/blueprints/${encodeURIComponent(initialImageId)}`
+      : `/sites/${encodeURIComponent(siteId)}/blueprint`;
+    api(imagePath, undefined, controller.signal)
       .then(({ 조감도 }) => {
         const next = 조감도 || null;
         setImage(next);
@@ -81,7 +84,7 @@ export default function BlueprintUpload({ siteId, onChange = () => {}, onReady =
       .catch(e => { if (e.name !== 'AbortError') setError(`조감도 정보를 불러오지 못했습니다. ${e.message}`); })
       .finally(() => onReady());
     return () => controller.abort();
-  }, [siteId]);
+  }, [siteId, initialImageId]);
 
   async function choose(event) {
     const file = event.target.files?.[0];

@@ -3,11 +3,12 @@ import { api } from './api';
 import Assessment from './assessment-result';
 import { AssessmentQuestionGroups, inputProgress } from './assessment-inputs';
 import { emptyMaterials } from './materials';
+import { ZonePreviousComparison } from './zone-dashboard';
 
 const blank = () => ({ task_id: '', answers: {}, watcher_answers: {}, materials: emptyMaterials() });
 const names = { '미작성': '미작성', '작성 중': '작성 중', '완료': '완료', '재계산 필요': '재계산 필요' };
 
-export default function ZoneAssessment({ siteId, image, zones, selected, siteName, weather }) {
+export default function ZoneAssessment({ siteId, image, zones, selected, siteName, weather, reassessment = null }) {
   const [tasks, setTasks] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [states, setStates] = useState({});
@@ -44,16 +45,22 @@ export default function ZoneAssessment({ siteId, image, zones, selected, siteNam
       loaded.current.add(zoneKey);
       const url = `/sites/${encodeURIComponent(siteId)}/blueprints/${encodeURIComponent(imageId)}/zones/${encodeURIComponent(zone.zone_id)}/assessment`;
       api(url, undefined, controller.signal).then(data => {
-        if (data['초안'] && !draftsRef.current[zoneKey]) {
+        const restoring = reassessment?.record?.['작업구역ID'] === zone.zone_id &&
+          reassessment?.record?.['현장조감도']?.['이미지ID'] === imageId ? reassessment.inputs : null;
+        if (restoring && !draftsRef.current[zoneKey]) {
+          draftsRef.current[zoneKey] = restoring;
+          setDrafts(current => ({ ...current, [zoneKey]: restoring }));
+          setStates(current => ({ ...current, [zoneKey]: data['최근평가'] ? '재계산 필요' : '작성 중' }));
+        } else if (data['초안'] && !draftsRef.current[zoneKey]) {
           draftsRef.current[zoneKey] = data['초안'];
           setDrafts(current => ({ ...current, [zoneKey]: data['초안'] }));
         }
-        if (!edited.current.has(zoneKey)) setStates(current => ({ ...current, [zoneKey]: data['입력상태'] }));
+        if (!edited.current.has(zoneKey) && !restoring) setStates(current => ({ ...current, [zoneKey]: data['입력상태'] }));
         if (data['최근평가']) setResults(current => ({ ...current, [zoneKey]: data['최근평가'] }));
       }).catch(e => { loaded.current.delete(zoneKey); if (e.name !== 'AbortError') setError(e.message); });
     }
     return () => controller.abort();
-  }, [siteId, imageId, zones]);
+  }, [siteId, imageId, zones, reassessment]);
 
   useEffect(() => {
     setSchema(null);
@@ -143,7 +150,7 @@ export default function ZoneAssessment({ siteId, image, zones, selected, siteNam
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="success" role="status">{notice}</p>}
       {results[key] && states[key] === '재계산 필요' && <p className="notice">조건이 변경되었습니다. 아래 결과는 이전 평가 시점의 기록입니다. 재계산이 필요합니다.</p>}
-      {results[key] && <Assessment record={results[key]} />}
+      {results[key] && <><Assessment record={results[key]} /><section className="panel"><h3>같은 구역의 직전 평가</h3><ZonePreviousComparison evaluationId={results[key]['평가ID']} /></section></>}
     </>}
   </section>;
 }

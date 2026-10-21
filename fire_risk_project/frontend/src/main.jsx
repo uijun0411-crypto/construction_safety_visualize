@@ -9,6 +9,8 @@ import Assessment, { colors } from './assessment-result';
 import { AssessmentQuestionGroups, inputProgress } from './assessment-inputs';
 import Comparison from './comparison';
 import PreviousComparison from './previous-comparison';
+import ZoneDashboard from './zone-dashboard';
+import ZoneHistoryDetail from './zone-history';
 import { emptyMaterials } from './materials';
 import { buildWatcherAnswers } from './watcher-payload';
 
@@ -26,11 +28,11 @@ function Metrics({ items }) {
   return <div className="metrics">{items.map(([label, value]) => <div className="metric" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>;
 }
 
-function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
+function NewEvaluation({ current, setCurrent, onSaved, onCompleted, reassessment }) {
   const siteInfo = (() => { try { return JSON.parse(localStorage.getItem('fire-risk-site-draft')) || {}; } catch { return {}; } })();
-  const [site, setSite] = useState(siteInfo.site_name || '');
-  const [siteId] = useState(() => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(siteInfo.site_id || '') ? siteInfo.site_id : crypto.randomUUID());
-  const [weather, setWeather] = useState({region_id:siteInfo.region_id || '',snapshot:null,token:null,exposure:'확인불가'});
+  const [site, setSite] = useState(reassessment?.record?.['현장명'] || siteInfo.site_name || '');
+  const [siteId] = useState(() => reassessment?.record?.['현장ID'] || (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(siteInfo.site_id || '') ? siteInfo.site_id : crypto.randomUUID()));
+  const [weather, setWeather] = useState({region_id:reassessment?.inputs?.weather_region_id || reassessment?.record?.['현장위치']?.id || siteInfo.region_id || '',snapshot:null,token:null,exposure:reassessment?.inputs?.weather_exposure || '확인불가'});
   const [blueprint, setBlueprint] = useState(null);
   const [blueprintReady, setBlueprintReady] = useState(false);
   const [zoneView, setZoneView] = useState({ zones: [], selected: null });
@@ -81,8 +83,10 @@ function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
   return <><div className="section-heading"><div><p className="eyebrow">PRE-WORK CHECK</p><h2>작업 시작 전 평가</h2><p className="muted">현장 상태를 확인하고 평가 기록을 남기세요.</p></div><span className="badge">용접·용단</span></div>
     <form onSubmit={evaluate}><fieldset disabled={busy}>
     <section className="panel"><div className="step-title"><span>01</span><h3>현장 기본정보</h3></div><label className="field">현장 이름<input value={site} maxLength={200} required placeholder="예: 서울 ○○ 신축공사" onChange={e => { invalidate(); setSite(e.target.value); }} /></label><WeatherPicker paused={busy || saved} value={weather} onChange={value=>{invalidate();setWeather(value);}} /></section>
-    <BlueprintUpload siteId={siteId} onChange={image=>{invalidate();setBlueprint(image);}} onReady={()=>setBlueprintReady(true)} onZoneChange={setZoneView} />
-    <ZoneAssessment siteId={siteId} image={blueprint} zones={zoneView.zones} selected={zoneView.selected} siteName={site} weather={weather} />
+    <BlueprintUpload key={`${siteId}/${reassessment?.record?.['현장조감도']?.['이미지ID'] || ''}`} siteId={siteId}
+      initialImageId={reassessment?.record?.['현장조감도']?.['이미지ID'] || ''} initialZoneId={reassessment?.record?.['작업구역ID'] || ''}
+      onChange={image=>{invalidate();setBlueprint(image);}} onReady={()=>setBlueprintReady(true)} onZoneChange={setZoneView} />
+    <ZoneAssessment key={`${siteId}/${reassessment?.record?.['작업구역ID'] || ''}`} siteId={siteId} image={blueprint} zones={zoneView.zones} selected={zoneView.selected} siteName={site} weather={weather} reassessment={reassessment} />
     <section className="panel"><div className="step-title"><span>04</span><h3>기존 단일 작업 평가 · 용접·용단</h3><small aria-live="polite">{loading ? '질문 확인 중…' : `${progress.answered} / ${progress.total} 응답 (하위 입력 포함) · 미응답 ${progress.missing} · 확인 필요 ${progress.unknown}`}</small></div>
     <details className="guide"><summary>거리 입력과 용접방화포 질문 안내</summary><p>현재 거리 점수는 11m 미만/이상으로 구분합니다. 화재감시자의 거리 관련 조건은 정확히 11m를 포함하는 ‘11m 이내’입니다. 거리만으로 배치 의무 전체를 판정하지 않습니다.</p><p>불티 비산방지조치 실시 여부와 용접방화포 사용 시 성능인증 여부를 각각 확인합니다. 다른 방법을 쓴다면 방화포 미사용으로 응답하되 실제 비산방지조치 상태도 확인하세요.</p></details>
     <AssessmentQuestionGroups schema={schema} answers={answers} extras={extras} materials={materials} onMaterialsChange={value=>{invalidate();setMaterials(value);}} onExtraChange={(id,value)=>{invalidate();setExtras(a=>({...a,[id]:value}));}} loading={loading} onChange={(id,value)=>{invalidate();if(id==='Q001'&&value!=='있음')setMaterials(emptyMaterials());setAnswers(a=>({...a,[id]:value}));}} />
@@ -94,7 +98,7 @@ function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
   </>;
 }
 
-function History({ revision, onSelect }) {
+function History({ revision, onSelect, onReassess }) {
   const [keyword, setKeyword] = useState('');
   const [rows, setRows] = useState([]);
   const [error, setError] = useState('');
@@ -103,11 +107,23 @@ function History({ revision, onSelect }) {
   const [before, setBefore] = useState('');
   const [after, setAfter] = useState('');
   const [comparison, setComparison] = useState(null);
+  const [zoneRows, setZoneRows] = useState([]);
+  const [zoneSite, setZoneSite] = useState('');
+  const [zoneId, setZoneId] = useState('');
+  const [zoneDetail, setZoneDetail] = useState(null);
+  const [zoneError, setZoneError] = useState('');
   const [retry, setRetry] = useState(0);
   const selection = useRef(0);
   useEffect(() => {
     const controller = new AbortController(); setBusy(true); setError('');
     api(`/evaluations?site_keyword=${encodeURIComponent(keyword)}`, undefined, controller.signal).then(setRows).catch(e => { if (e.name !== 'AbortError') { setRows([]); setError(e.message); } }).finally(() => { if (!controller.signal.aborted) setBusy(false); });
+    return () => controller.abort();
+  }, [keyword, revision, retry]);
+  useEffect(() => {
+    const controller = new AbortController(); setZoneError('');
+    api(`/zone-assessments?site_keyword=${encodeURIComponent(keyword)}`, undefined, controller.signal)
+      .then(result => setZoneRows(result['평가이력'] || []))
+      .catch(e => { if (e.name !== 'AbortError') { setZoneRows([]); setZoneError(e.message); } });
     return () => controller.abort();
   }, [keyword, revision, retry]);
   async function open(id) {
@@ -121,9 +137,27 @@ function History({ revision, onSelect }) {
     catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
+  async function openZone(id) {
+    setZoneError(''); setZoneDetail(null);
+    try { setZoneDetail(await api(`/zone-assessments/${encodeURIComponent(id)}`)); }
+    catch (e) { setZoneError(e.message); }
+  }
+  const zoneSites = [...new Map(zoneRows.map(row => [row['현장ID'], row['현장명']])).entries()];
+  const siteZoneRows = zoneRows.filter(row => !zoneSite || row['현장ID'] === zoneSite);
+  const zonesForSite = [...new Map(siteZoneRows.map(row => [row['작업구역ID'], row['작업구역명']])).entries()];
+  const filteredZoneRows = siteZoneRows.filter(row => !zoneId || row['작업구역ID'] === zoneId);
   const label = r => `${date(r['평가일시'])} · ${r['현장명']}`;
   return <><div className="section-heading"><div><p className="eyebrow">ASSESSMENT ARCHIVE</p><h2>저장 기록·비교</h2></div><button onClick={() => setRetry(n => n + 1)} disabled={busy}>새로고침</button></div><section className="panel"><label className="field">현장명 검색<input placeholder="현장명으로 검색" value={keyword} onChange={e => setKeyword(e.target.value)} /></label>{busy && <p role="status">불러오는 중…</p>}
     <div className="record-list">{rows.map(r => <button className="record-row" key={r['평가ID']} onClick={() => open(r['평가ID'])}><span><b>{r['현장명']}</b><small>{date(r['평가일시'])}</small></span><span><b>{score(r['위험지수'])}</b><small>{r['기본위험등급(잠정)']} · 잠정</small></span><span aria-hidden="true">↗</span></button>)}</div>{!rows.length && !busy && <p className="empty">검색 조건에 맞는 저장 기록이 없습니다.</p>}</section>
+    <section className="panel zone-history-list"><h3>구역별 평가이력</h3><p className="muted">현장과 구역을 선택해 평가일시별 이력을 확인하고, 같은 구역의 직전 기록과 비교할 수 있습니다.</p>
+      <div className="questions"><label className="field">현장<select value={zoneSite} onChange={event => { setZoneSite(event.target.value); setZoneId(''); setZoneDetail(null); }}><option value="">전체 현장</option>{zoneSites.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
+        <label className="field">작업구역<select value={zoneId} onChange={event => { setZoneId(event.target.value); setZoneDetail(null); }}><option value="">전체 구역</option>{zonesForSite.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label></div>
+      {zoneError && <p className="error" role="alert">구역 이력 조회 실패: {zoneError}</p>}
+      <div className="zone-history-table-wrap"><table className="zone-history-table"><thead><tr><th>현장</th><th>구역</th><th>평가일시</th><th>작업명</th><th>위험지수</th><th>위험수준</th><th>조감도 버전</th><th>기록</th></tr></thead><tbody>
+        {filteredZoneRows.map(row => <tr key={row['평가ID']} data-evaluation-id={row['평가ID']}><td>{row['현장명']}</td><td>{row['작업구역명']}</td><td>{date(row['평가일시'])}</td><td>{row['작업명']}</td><td>{score(row['위험지수'])}</td><td>{row['위험수준'] || '미산정'}</td><td>{row['이미지버전'] ?? '자료 없음'}</td><td><button type="button" onClick={() => openZone(row['평가ID'])}>조회·비교</button></td></tr>)}
+      </tbody></table></div>{!filteredZoneRows.length && !zoneError && <p className="empty">선택한 조건의 구역 평가이력이 없습니다.</p>}
+    </section>
+    {zoneDetail?.['평가'] && <ZoneHistoryDetail record={zoneDetail['평가']} onReassess={record => onReassess(record, zoneDetail['재평가입력'])} />}
     {error && <p className="error" role="alert">{error}</p>}
     {detail && <><Assessment record={detail} /><details className="panel"><summary>저장된 평가 요약·원래 입력</summary><Table rows={[detail['요약']]} /><Table rows={Object.entries(detail['응답']).map(([k, v]) => ({ 항목ID: k, 입력값: v }))} /></details><button onClick={() => onSelect(detail)}>이 평가를 대시보드에서 보기</button></>}
     <section className="panel"><h3>평가 두 건 비교</h3><p className="muted">같은 현장·작업을 선택하세요. 계산 기준이 다르면 점수 차이를 표시하지 않습니다.</p><div className="questions">{[['이전 평가', before, setBefore], ['이후 평가', after, setAfter]].map(([title, value, setter]) => <label className="field" key={title}>{title}<select value={value} disabled={busy} onChange={e => { setter(e.target.value); setComparison(null); }}><option value="">평가 선택</option>{rows.map(r => <option key={r['평가ID']} value={r['평가ID']}>{label(r)}</option>)}</select></label>)}</div><button className="primary" disabled={busy || !before || !after} onClick={compare}>비교하기</button>
@@ -166,7 +200,7 @@ function Dashboard({ current, selected, revision }) {
   return <><div className="section-heading"><div><p className="eyebrow">RISK OVERVIEW</p><h2>결과 대시보드</h2></div><button onClick={() => setRetry(n => n + 1)}>새로고침</button></div>
     <label className="field view-select">상세 결과 기준<select value={view} onChange={e => { setDetail(null); setView(e.target.value); }}>{current && <option value="current">현재 평가</option>}{!current && !records.length && <option value="">저장된 평가 없음</option>}{records.map(r => <option key={r['평가ID']} value={r['평가ID']}>{r['현장명']} / {r['작업명']} / {date(r['평가일시'])}</option>)}</select></label>
     {listError && <p className="error" role="alert">평가 목록 조회 실패: {listError}</p>}
-    {detailError ? <p className="error" role="alert">{detailError}</p> : view && view !== 'current' && !detail ? <p role="status">평가 불러오는 중…</p> : <><Assessment record={view === 'current' ? current : detail} /><PreviousComparison key={view === 'current' ? current?.['평가ID'] : view} record={view === 'current' ? current : detail} revision={retry + revision} /></>}
+    {detailError ? <p className="error" role="alert">{detailError}</p> : view && view !== 'current' && !detail ? <p role="status">평가 불러오는 중…</p> : <ZoneDashboard key={view === 'current' ? current?.['평가ID'] || 'current' : view} record={view === 'current' ? current : detail} revision={retry + revision} fallback={<><Assessment record={view === 'current' ? current : detail} /><PreviousComparison key={view === 'current' ? current?.['평가ID'] : view} record={view === 'current' ? current : detail} revision={retry + revision} /></>} />}
     <section className="panel"><div className="section-heading"><h3>저장된 평가 현황</h3><label className="field">현장 필터<select value={site} onChange={e => { setSite(e.target.value); setGroup(''); }}><option value="">전체 현장</option>{(stats?.sites || (site ? [site] : [])).map(s => <option key={s}>{s}</option>)}</select></label></div>
     {error ? <p className="error" role="alert">{error}</p> : !stats ? <p role="status">불러오는 중…</p> : <><Metrics items={[["저장 평가", stats.count], ['현장', stats.site_count], ['판정 보류', stats.held_count]]} /><p className="muted">같은 현장의 반복 평가도 각각 한 건입니다. 저장 당시의 잠정등급이며 사고 건수나 확률이 아닙니다.</p>
     {Object.entries(stats.grades).map(([grade, count]) => <div className="bar-row" key={grade}><div><span>{grade}</span><b>{count}건</b></div><div className="bar-track teal"><div style={{ width: `${count / Math.max(stats.count, 1) * 100}%`, background: colors[grade] || colors['확인필요'] }} /></div></div>)}{!stats.count && <p className="empty">평가를 저장하면 현황이 표시됩니다.</p>}
@@ -182,6 +216,7 @@ function App() {
   const [tab, setTab] = useState('new');
   const [current, setCurrent] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [zoneReassessment, setZoneReassessment] = useState(null);
   const [revision, setRevision] = useState(0);
   useEffect(() => { let active = true; api('/session').then(() => { if (active) setConnected(true); }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setChecking(false); }); return () => { active = false; }; }, []);
   async function connect(e) {
@@ -190,12 +225,12 @@ function App() {
     catch (e) { setError(e.message); }
     finally { setChecking(false); }
   }
-  return <div className="app"><aside className="sidebar"><div className="brand"><span className="brand-icon">F</span><div>FIRE RISK<small>건설현장 화재 위험도</small></div></div><p className="nav-label">WORKSPACE</p><nav aria-label="주 메뉴">{[['new', '01', '새 평가'], ['dashboard', '02', '결과 대시보드'], ['history', '03', '저장 기록·비교']].map(([id, n, title]) => <button key={id} aria-current={tab === id ? 'page' : undefined} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}><span>{n}</span>{title}</button>)}</nav><div className="sidebar-bottom"><span className="status-dot" /> 작업 시작 전 평가<small>용접·용단<br />규칙 기반 시험 평가</small></div></aside>
+  return <div className="app"><aside className="sidebar"><div className="brand"><span className="brand-icon">F</span><div>FIRE RISK<small>건설현장 화재 위험도</small></div></div><p className="nav-label">WORKSPACE</p><nav aria-label="주 메뉴">{[['new', '01', '새 평가'], ['dashboard', '02', '결과 대시보드'], ['history', '03', '저장 기록·비교']].map(([id, n, title]) => <button key={id} aria-current={tab === id ? 'page' : undefined} className={tab === id ? 'active' : ''} onClick={() => { if (id === 'new') setZoneReassessment(null); setTab(id); }}><span>{n}</span>{title}</button>)}</nav><div className="sidebar-bottom"><span className="status-dot" /> 작업 시작 전 평가<small>용접·용단<br />규칙 기반 시험 평가</small></div></aside>
     <div className="workspace"><header><span>현장 안전 관리 <b>/ 화재 위험도 평가</b></span><span className="header-slogan">작업 전 <strong>화재 위험</strong>, 정해진 <strong>기준</strong>으로 평가하세요</span><span className="header-tag">PRE-WORK</span></header><main>
     {!connected ? <form className="panel login" onSubmit={connect}><p className="eyebrow">WORKSPACE ACCESS</p><h2>{checking ? '연결 확인 중…' : '평가 서비스 접속'}</h2><label className="field">접속 키<input type="password" autoComplete="off" value={key} onChange={e => setKey(e.target.value)} placeholder="관리자에게 받은 접속 키" /></label><p className="muted">접속 키는 이 탭이 열려 있는 동안만 유지됩니다.</p>{error && <p role="alert" className="error">{error}</p>}<button className="primary" disabled={checking}>연결하기</button></form> : <>
-      <div hidden={tab !== 'new'}><NewEvaluation current={current} setCurrent={setCurrent} onSaved={() => setRevision(n => n + 1)} onCompleted={() => { setSelected(null); setTab('dashboard'); }} /></div>
+      <div hidden={tab !== 'new'}><NewEvaluation key={zoneReassessment?.record?.['평가ID'] || 'new-evaluation'} current={current} setCurrent={setCurrent} reassessment={zoneReassessment} onSaved={() => setRevision(n => n + 1)} onCompleted={() => { setZoneReassessment(null); setSelected(null); setTab('dashboard'); }} /></div>
       {tab === 'dashboard' && <Dashboard current={current} selected={selected} revision={revision} />}
-      {tab === 'history' && <History revision={revision} onSelect={r => { setSelected(r); setTab('dashboard'); }} />}
+      {tab === 'history' && <History revision={revision} onSelect={r => { setSelected(r); setTab('dashboard'); }} onReassess={(record, inputs) => { setZoneReassessment({ record, inputs }); setTab('new'); }} />}
     </>}
     <footer>화재 위험도 평가 · 작업 시작 전 확인 기록</footer></main></div></div>;
 }

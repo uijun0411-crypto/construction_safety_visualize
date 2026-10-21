@@ -384,6 +384,32 @@ def list_zone_assessments(storage, site_id, image_id, zone_id):
     return [row[0] if isinstance(row[0], dict) else json.loads(row[0]) for row in rows]
 
 
+def list_all_zone_assessments(storage, site_id=None):
+    """Load the immutable zone records for the history index, newest first."""
+    postgres = is_postgres_storage(storage)
+    if site_id:
+        query = ("SELECT payload FROM zone_assessments WHERE site_id = %s ORDER BY evaluated_at DESC, evaluation_id DESC"
+                 if postgres else "SELECT payload FROM zone_assessments WHERE site_id = ? ORDER BY evaluated_at DESC, evaluation_id DESC")
+        params = (site_id,)
+    else:
+        query = "SELECT payload FROM zone_assessments ORDER BY evaluated_at DESC, evaluation_id DESC"
+        params = ()
+    connection = _connect_postgres(storage) if postgres else sqlite3.connect(Path(storage).expanduser().resolve())
+    with closing(connection) as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [row[0] if isinstance(row[0], dict) else json.loads(row[0]) for row in rows]
+
+
+def zone_assessment_by_id(storage, evaluation_id):
+    postgres = is_postgres_storage(storage)
+    query = ("SELECT payload FROM zone_assessments WHERE evaluation_id = %s"
+             if postgres else "SELECT payload FROM zone_assessments WHERE evaluation_id = ?")
+    connection = _connect_postgres(storage) if postgres else sqlite3.connect(Path(storage).expanduser().resolve())
+    with closing(connection) as conn:
+        row = conn.execute(query, (evaluation_id,)).fetchone()
+    return None if row is None else row[0] if isinstance(row[0], dict) else json.loads(row[0])
+
+
 def save_zone_assessment(storage, site_id, image_id, zone_id, record):
     serialized = json.dumps(record, ensure_ascii=False, allow_nan=False)
     postgres = is_postgres_storage(storage)

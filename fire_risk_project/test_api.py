@@ -163,6 +163,55 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get(new_zones_url).json()["작업구역"], [])
         self.assertEqual(len(self.client.get(zones_url).json()["작업구역"]), 2)
 
+    def test_zone_history_is_scoped_and_keeps_input_image_and_coordinate_snapshots(self):
+        site_id = str(uuid4())
+        png = base64.b64encode(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jv4kAAAAASUVORK5CYII=")).decode()
+        image = self.client.post(f"/api/sites/{site_id}/blueprints", json={
+            "filename": "history.png", "media_type": "image/png", "data_base64": png,
+        }).json()["조감도"]
+        zones_url = f"/api/sites/{site_id}/blueprints/{image['이미지ID']}/zones"
+        first_coordinates = {"x": .05, "y": .1, "width": .3, "height": .3}
+        second_coordinates = {"x": .1, "y": .2, "width": .35, "height": .25}
+        zone_a = self.client.post(zones_url, json={"name": "A구역", "coordinates": first_coordinates}).json()["작업구역"]
+        zone_b = self.client.post(zones_url, json={"name": "B구역", "coordinates": {"x": .55, "y": .2, "width": .3, "height": .3}}).json()["작업구역"]
+
+        def evaluate(zone, answers):
+            response = self.client.post(
+                f"{zones_url}/{zone['작업구역ID']}/evaluate",
+                json={**self.body, "task_id": "H05", "answers": answers, "materials": {"unknown": True}},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            return response.json()["평가"]
+
+        a_first = evaluate(zone_a, self.body["answers"])
+        b_first = evaluate(zone_b, self.body["answers"])
+        self.assertEqual(a_first["작업구역좌표"], first_coordinates)
+        self.assertEqual(a_first["현장조감도"]["이미지ID"], image["이미지ID"])
+
+        edit = self.client.put(f"{zones_url}/{zone_a['작업구역ID']}", json={
+            "name": "A구역 명칭 변경", "coordinates": second_coordinates,
+        })
+        self.assertEqual(edit.status_code, 200, edit.text)
+        a_answers = {**self.body["answers"], "Q002": 8}
+        a_second = evaluate(zone_a, a_answers)
+        self.assertEqual(a_second["작업구역ID"], a_first["작업구역ID"])
+        self.assertEqual(a_second["작업구역명"], "A구역 명칭 변경")
+        self.assertEqual(a_second["작업구역좌표"], second_coordinates)
+        self.assertEqual(a_second["입력조건"]["answers"]["Q002"], 8)
+        self.assertEqual(a_second["이전구역평가ID"], a_first["평가ID"])
+
+        history = self.client.get("/api/zone-assessments", params={"site_id": site_id}).json()["평가이력"]
+        self.assertEqual({row["평가ID"] for row in history}, {a_first["평가ID"], b_first["평가ID"], a_second["평가ID"]})
+        details = self.client.get(f"/api/zone-assessments/{a_first['평가ID']}").json()
+        self.assertEqual(details["평가"]["작업구역좌표"], first_coordinates)
+        self.assertEqual(details["재평가입력"]["answers"]["Q002"], self.body["answers"]["Q002"])
+        previous = self.client.get(f"/api/zone-assessments/{a_second['평가ID']}/previous").json()
+        self.assertEqual(previous["이전평가ID"], a_first["평가ID"])
+        self.assertNotEqual(previous["이전평가ID"], b_first["평가ID"])
+        self.assertTrue(previous["comparison"]["비교안내"]["점수차이표시가능"])
+        self.assertEqual(previous["comparison"]["평가요약"][0]["위험지수"], a_first["요약"]["위험지수"])
+        self.assertEqual(previous["comparison"]["평가요약"][1]["위험지수"], a_second["요약"]["위험지수"])
+
     def test_engine_parity_and_conditional_questions(self):
         self.body["answers"]["Q001"] = "없음"
         questions = self.client.post("/api/questions", json={"answers": self.body["answers"]}).json()["questions"]

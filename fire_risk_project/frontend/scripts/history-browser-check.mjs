@@ -92,7 +92,7 @@ try {
   assert.equal(await evaluate("document.querySelector('fieldset .actions button').disabled"),false);
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'),true);
-  await writeFile(join(root,'outputs/weather-input-mobile.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true})).data,'base64'));
+  await writeFile(join(temporary,'weather-input-mobile.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true})).data,'base64'));
   await send('Emulation.clearDeviceMetricsOverride');
   await send('Fetch.enable',{patterns:[{urlPattern:'*/api/weather?*',requestStage:'Request'}]});
   await click('기상정보 다시 조회');
@@ -102,7 +102,7 @@ try {
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'),true);
   const weatherClip=await evaluate("(()=>{const r=document.querySelector('.weather-card').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1};})()");
-  await writeFile(join(root,'outputs/weather-fixture-mobile.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true,clip:weatherClip})).data,'base64'));
+  await writeFile(join(temporary,'weather-fixture-mobile.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true,clip:weatherClip})).data,'base64'));
   await send('Emulation.clearDeviceMetricsOverride');
   await send('Fetch.disable');
   await evaluate("document.querySelectorAll('nav button')[1].click()");
@@ -118,10 +118,10 @@ try {
   await until(()=>evaluate("document.querySelector('.previous-comparison .empty') && Array.from(document.querySelectorAll('.assessment h2')).at(-1)?.textContent==='다른 현장'"),'race-safe selection');
   await select(second['평가ID']);
   await until(()=>evaluate("!!document.querySelector('.comparison-outcome')"),'comparison layout');
-  await writeFile(join(root,'outputs/followup-history-desktop.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true})).data,'base64'));
+  await writeFile(join(temporary,'followup-history-desktop.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true})).data,'base64'));
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'),true);
-  await writeFile(join(root,'outputs/followup-history-mobile.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true})).data,'base64'));
+  await writeFile(join(temporary,'followup-history-mobile.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true})).data,'base64'));
   await send('Emulation.clearDeviceMetricsOverride');
   await evaluate("document.querySelectorAll('nav button')[2].click()");
   await until(()=>evaluate("document.querySelectorAll('.record-row').length===3"),'history list');
@@ -170,9 +170,9 @@ try {
   await evaluate("document.querySelector('#material-unknown').click()");
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'),true);
-  await writeFile(join(root,'outputs/followup-stage3-input-mobile.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true})).data,'base64'));
+  await writeFile(join(temporary,'followup-stage3-input-mobile.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true})).data,'base64'));
   const inputClip=await evaluate("(()=>{const r=document.querySelector('.material-picker').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1};})()");
-  await writeFile(join(root,'outputs/followup-stage3-material-card.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true,clip:inputClip})).data,'base64'));
+  await writeFile(join(temporary,'followup-stage3-material-card.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true,clip:inputClip})).data,'base64'));
   await send('Emulation.clearDeviceMetricsOverride');
   assert.ok((await evaluate(visibleText)).includes('11 / 11 응답'));
   await evaluate("document.querySelector('fieldset .actions button').click()");
@@ -188,10 +188,10 @@ try {
   assert.ok((await evaluate(visibleText)).includes('가연물의 정확한 종류 및 MSDS 확인이 필요합니다'));
   await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'),true);
-  await writeFile(join(root,'outputs/followup-stage3-result-desktop.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true})).data,'base64'));
+  await writeFile(join(temporary,'followup-stage3-result-desktop.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true})).data,'base64'));
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'),true);
-  await writeFile(join(root,'outputs/followup-stage3-result-mobile.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true})).data,'base64'));
+  await writeFile(join(temporary,'followup-stage3-result-mobile.png'),Buffer.from((await send('Page.captureScreenshot',{captureBeyondViewport:true})).data,'base64'));
   await send('Emulation.clearDeviceMetricsOverride');
   await send('Page.reload');
   await until(()=>evaluate("!!document.querySelector('#question-Q001')"),'final refresh');
