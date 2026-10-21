@@ -13,8 +13,19 @@ def assess(snapshot, task_group, answers, exposure):
     weather_relevant = any(term in groups for term in ("화기", "불티", "마찰·절삭", "가열·열원", "인화성물질"))
     if not weather_relevant:
         return {"상태": "비대상작업", "안내": "선택 작업은 이번 시범 기상검토 대상이 아닙니다.", "점수": 0, "최대점수": 3, "요인": []}
-    if answers.get("Q001") != "있음":
-        return {"상태": "가연물확인필요", "안내": "주변 가연물이 확인된 경우에만 시범 기상 가산요인을 검토합니다.", "점수": 0, "최대점수": 3, "요인": []}
+    combustible = answers.get("Q001")
+    if combustible == "없음":
+        return {
+            "상태": "가연물비해당",
+            "안내": "주변 가연물 없음 응답으로 기상 가산요인을 적용하지 않았습니다. 이 표시는 화재위험이 없거나 안전이 확인됐다는 뜻이 아닙니다.",
+            "요인": [],
+        }
+    if combustible != "있음":
+        return {
+            "상태": "가연물확인필요",
+            "안내": "주변 가연물 여부가 미응답 또는 확인되지 않아 기상 가산요인을 계산하지 않았습니다.",
+            "요인": [],
+        }
 
     observed = snapshot.get("observed") or {}
     forecast = snapshot.get("forecast") or {}

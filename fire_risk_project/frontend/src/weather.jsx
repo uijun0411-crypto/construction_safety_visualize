@@ -9,7 +9,7 @@ export function WeatherSummary({snapshot,location}) {
    <dl className="weather-values">{[['기온',observed?.temperature==null?null:`${observed.temperature} ℃`],['상대습도',observed?.humidity==null?null:`${observed.humidity} %`],['강수형태',observed?.precipitation],['1시간 강수량',observed?.rainfall]].map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value??'미제공'}</dd></div>)}</dl>
    <p className="muted">관측 기준시각: {date(observed?.valid_at)} (한국시간)</p>
    <h5>초단기예보 · {forecast?.kind || '조회 자료 없음'}</h5>
-   <dl className="weather-values">{[['예보 강수형태',forecast?.precipitation],['하늘 상태',forecast?.sky],['풍속',forecast?.wind_speed==null?null:`${forecast.wind_speed} m/s`],['풍향',forecast?.wind_direction==null?null:`${forecast.wind_direction}°`]].map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value??'미제공'}</dd></div>)}</dl>
+   <dl className="weather-values">{[['예보 강수형태',forecast?.precipitation],['하늘 상태',forecast?.sky],['풍속',forecast?.wind_speed==null?null:`${forecast.wind_speed} m/s`]]].map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value??'미제공'}</dd></div>)}</dl>
    <p className="muted">예보 발표시각: {date(forecast?.base_at)}<br/>예보 대상시각: {date(forecast?.valid_at)}<br/>조회 시각: {date(snapshot.fetched_at)} (한국시간)</p>
    {snapshot.warnings&&Object.keys(snapshot.warnings).length>0&&<p className="muted">일부 관측·예보 자료를 불러오지 못했습니다.</p>}
    <p className="muted">출처: <a href={snapshot.source_url} target="_blank" rel="noreferrer">{snapshot.source}</a> · 행정구역 대표 격자 기준이며 현장 실측값이 아닙니다.</p>
