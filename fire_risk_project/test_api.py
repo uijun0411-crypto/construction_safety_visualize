@@ -1,5 +1,6 @@
 """Run: python -m unittest fire_risk_project.test_api -v"""
 from pathlib import Path
+import base64
 from contextlib import closing
 import os
 import sqlite3
@@ -12,7 +13,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from .api import create_app
-from . import risk_engine as engine
+from . import risk_engine as engine, weather
 from . import storage as evaluation_storage
 
 
@@ -62,6 +63,105 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(self.client.get("/api/evaluations?site_keyword=테스트").json()), 1)
         self.assertEqual(self.client.get("/api/dashboard").json()["count"], 1)
         self.assertEqual(self.client.get("/api/dashboard?site=없는현장").json()["count"], 0)
+
+    def test_site_id_is_persisted_and_legacy_records_remain_supported(self):
+        site_id = str(uuid4())
+        region_id = weather.CATALOGUE["regions"][0]["id"]
+        record = self.evaluate({**self.body, "site_id": site_id, "region_id": region_id})
+        self.assertEqual(record["현장ID"], site_id)
+        self.assertEqual(record["현장위치"]["id"], region_id)
+        self.assertIsNone(record["기상정보"])
+        saved = self.client.get(f"/api/evaluations/{record['평가ID']}").json()
+        self.assertEqual(saved["현장ID"], site_id)
+        self.assertEqual(saved["현장위치"]["id"], region_id)
+        self.assertIsNone(saved["기상정보"])
+        legacy = self.evaluate({**self.body, "request_id": str(uuid4())})
+        self.assertNotIn("현장ID", legacy)
+
+    def test_private_blueprint_upload_versioning_delete_and_evaluation_link(self):
+        site_id = str(uuid4())
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jv4kAAAAASUVORK5CYII=")
+        upload = {"filename": "site.png", "media_type": "image/png", "data_base64": base64.b64encode(png).decode()}
+        url = f"/api/sites/{site_id}/blueprints"
+
+        first_response = self.client.post(url, json=upload)
+        self.assertEqual(first_response.status_code, 200, first_response.text)
+        first = first_response.json()["조감도"]
+        self.assertEqual((first["현장ID"], first["버전"], first["원본너비"], first["원본높이"]), (site_id, 1, 1, 1))
+        current = self.client.get(f"/api/sites/{site_id}/blueprint").json()["조감도"]
+        self.assertEqual(current["이미지Base64"], upload["data_base64"])
+        with TestClient(create_app(self.storage, access_key="test-key")) as restarted:
+            restored = restarted.get(f"/api/sites/{site_id}/blueprint", headers={"X-Access-Key": "test-key"}).json()["조감도"]
+            self.assertEqual(restored["이미지ID"], first["이미지ID"])
+
+        second = self.client.post(url, json={**upload, "filename": "replacement.png"}).json()["조감도"]
+        self.assertEqual(second["버전"], 2)
+        self.assertNotEqual(first["이미지ID"], second["이미지ID"])
+        old = self.client.get(f"/api/sites/{site_id}/blueprints/{first['이미지ID']}").json()["조감도"]
+        self.assertEqual(old["이미지ID"], first["이미지ID"])
+
+        record = self.evaluate({**self.body, "site_id": site_id, "blueprint_image_id": second["이미지ID"]})
+        self.assertEqual(record["현장조감도"]["이미지ID"], second["이미지ID"])
+        saved = self.client.get(f"/api/evaluations/{record['평가ID']}").json()
+        self.assertEqual(saved["현장조감도"]["버전"], 2)
+
+        deleted = self.client.delete(f"/api/sites/{site_id}/blueprint")
+        self.assertTrue(deleted.json()["삭제됨"])
+        self.assertIsNone(self.client.get(f"/api/sites/{site_id}/blueprint").json()["조감도"])
+        self.assertEqual(self.client.get(f"/api/sites/{site_id}/blueprints/{second['이미지ID']}").status_code, 200)
+
+    def test_blueprint_rejects_invalid_format_and_over_limit_file(self):
+        site_id = str(uuid4())
+        url = f"/api/sites/{site_id}/blueprints"
+        wrong_format = {"filename": "fake.png", "media_type": "image/png", "data_base64": base64.b64encode(b"not an image").decode()}
+        self.assertEqual(self.client.post(url, json=wrong_format).status_code, 422)
+        self.assertEqual(self.client.post(url, json={**wrong_format, "media_type": "image/gif"}).status_code, 422)
+        self.assertEqual(self.client.post(url, json={**wrong_format, "filename": "fake.jpg", "media_type": "image/jpeg"}).status_code, 422)
+        oversized = {"filename": "large.jpg", "media_type": "image/jpeg", "data_base64": base64.b64encode(b"x" * 3_000_001).decode()}
+        response = self.client.post(url, json=oversized)
+        self.assertEqual(response.status_code, 413, response.text)
+
+    def test_rectangular_work_zones_crud_three_zones_and_image_version_binding(self):
+        site_id = str(uuid4())
+        png = base64.b64encode(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jv4kAAAAASUVORK5CYII=")).decode()
+        upload_url = f"/api/sites/{site_id}/blueprints"
+        image = self.client.post(upload_url, json={"filename": "plan.png", "media_type": "image/png", "data_base64": png}).json()["조감도"]
+        zones_url = f"/api/sites/{site_id}/blueprints/{image['이미지ID']}/zones"
+        rectangles = [
+            {"x": 0.05, "y": 0.10, "width": 0.20, "height": 0.25},
+            {"x": 0.35, "y": 0.20, "width": 0.25, "height": 0.30},
+            {"x": 0.68, "y": 0.55, "width": 0.22, "height": 0.28},
+        ]
+        created = []
+        for name, coordinates in zip(("A구역", "B구역", "C구역"), rectangles):
+            response = self.client.post(zones_url, json={"name": name, "coordinates": coordinates})
+            self.assertEqual(response.status_code, 200, response.text)
+            created.append(response.json()["작업구역"])
+        ids = [zone["작업구역ID"] for zone in created]
+        self.assertEqual(len(set(ids)), 3)
+        restored = self.client.get(zones_url).json()["작업구역"]
+        self.assertEqual([zone["좌표"] for zone in restored], rectangles)
+        self.assertEqual([zone["이름"] for zone in restored], ["A구역", "B구역", "C구역"])
+        with TestClient(create_app(self.storage, access_key="test-key")) as restarted:
+            after_restart = restarted.get(zones_url, headers={"X-Access-Key": "test-key"}).json()["작업구역"]
+            self.assertEqual([zone["작업구역ID"] for zone in after_restart], ids)
+            self.assertEqual([zone["좌표"] for zone in after_restart], rectangles)
+
+        edited_url = f"{zones_url}/{ids[1]}"
+        moved = {"name": "B구역 수정", "coordinates": {"x": 0.40, "y": 0.25, "width": 0.30, "height": 0.35}}
+        response = self.client.put(edited_url, json=moved)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["작업구역"]["좌표"], moved["coordinates"])
+        self.assertEqual(self.client.get(zones_url).json()["작업구역"][1]["이름"], "B구역 수정")
+        self.assertEqual(self.client.delete(f"{zones_url}/{ids[0]}").json()["삭제됨"], True)
+        self.assertEqual(len(self.client.get(zones_url).json()["작업구역"]), 2)
+        outside = self.client.post(zones_url, json={"name": "오류구역", "coordinates": {"x": 0.9, "y": 0.8, "width": 0.2, "height": 0.2}})
+        self.assertEqual(outside.status_code, 422)
+
+        replacement = self.client.post(upload_url, json={"filename": "plan-v2.png", "media_type": "image/png", "data_base64": png}).json()["조감도"]
+        new_zones_url = f"/api/sites/{site_id}/blueprints/{replacement['이미지ID']}/zones"
+        self.assertEqual(self.client.get(new_zones_url).json()["작업구역"], [])
+        self.assertEqual(len(self.client.get(zones_url).json()["작업구역"]), 2)
 
     def test_engine_parity_and_conditional_questions(self):
         self.body["answers"]["Q001"] = "없음"

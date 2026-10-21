@@ -1,5 +1,7 @@
 """React용 API. 실행: uvicorn fire_risk_project.api:app --reload"""
 from contextlib import asynccontextmanager
+import base64
+import binascii
 import hmac
 import json
 import logging
@@ -7,14 +9,14 @@ import os
 import sqlite3
 import hashlib
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr, StrictBool, model_validator
 
 from . import risk_engine as engine
 from . import storage as evaluation_storage
@@ -25,6 +27,55 @@ from . import weather
 from . import weather_risk
 
 ROOT = Path(__file__).resolve().parent
+MAX_BLUEPRINT_BYTES = 3_000_000
+
+
+def inspect_blueprint(data, media_type):
+    """Validate image signatures and read dimensions without trusting browser metadata."""
+    width = height = None
+    if media_type == "image/png" and data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24 and data[12:16] == b"IHDR":
+        width, height = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    elif media_type == "image/jpeg" and data.startswith(b"\xff\xd8"):
+        index = 2
+        while index + 4 <= len(data):
+            if data[index] != 0xFF:
+                index += 1
+                continue
+            while index < len(data) and data[index] == 0xFF:
+                index += 1
+            if index >= len(data):
+                break
+            marker = data[index]
+            index += 1
+            if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7 or marker == 0x01:
+                continue
+            if index + 2 > len(data):
+                break
+            length = int.from_bytes(data[index:index + 2], "big")
+            if length < 2 or index + length > len(data):
+                break
+            if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF} and length >= 7:
+                height = int.from_bytes(data[index + 3:index + 5], "big")
+                width = int.from_bytes(data[index + 5:index + 7], "big")
+                break
+            index += length
+    elif media_type == "image/webp" and len(data) >= 30 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        chunk = data[12:16]
+        if chunk == b"VP8X":
+            width = 1 + int.from_bytes(data[24:27], "little")
+            height = 1 + int.from_bytes(data[27:30], "little")
+        elif chunk == b"VP8 " and len(data) >= 30 and data[23:26] == b"\x9d\x01\x2a":
+            width = int.from_bytes(data[26:28], "little") & 0x3FFF
+            height = int.from_bytes(data[28:30], "little") & 0x3FFF
+        elif chunk == b"VP8L" and len(data) >= 25 and data[20] == 0x2F:
+            b1, b2, b3, b4 = data[21:25]
+            width = 1 + b1 + ((b2 & 0x3F) << 8)
+            height = 1 + (b2 >> 6) + (b3 << 2) + ((b4 & 0x0F) << 10)
+    if not width or not height:
+        raise ValueError("이미지 형식이 올바르지 않거나 크기 정보를 읽을 수 없습니다.")
+    if width > 30000 or height > 30000 or width * height > 80_000_000:
+        raise ValueError("이미지 해상도가 너무 큽니다. 8천만 픽셀 이하의 이미지로 등록하세요.")
+    return width, height
 
 
 def frame_rows(frame):
@@ -45,6 +96,8 @@ class MaterialSelection(BaseModel):
 
 
 class EvaluationInput(Answers):
+    site_id: UUID | None = None
+    blueprint_image_id: UUID | None = None
     region_id: str | None = Field(default=None, max_length=20)
     weather_token: str | None = Field(default=None, max_length=12000)
     weather_exposure: Literal["실외", "실내", "확인불가"] = "확인불가"
@@ -55,8 +108,57 @@ class EvaluationInput(Answers):
     watcher_answers: dict[str, Literal["예", "아니오", "확인불가"]] = Field(default_factory=dict, max_length=4)
 
 
+class BlueprintUpload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    filename: StrictStr = Field(min_length=1, max_length=240)
+    media_type: Literal["image/jpeg", "image/png", "image/webp"]
+    data_base64: StrictStr = Field(min_length=1, max_length=4_100_000)
+
+
+class RectangleCoordinates(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def inside_image(self):
+        if self.x + self.width > 1.0000001 or self.y + self.height > 1.0000001:
+            raise ValueError("작업구역은 조감도 이미지 안에 있어야 합니다.")
+        return self
+
+
+class WorkZoneInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: StrictStr = Field(min_length=1, max_length=80)
+    coordinates: RectangleCoordinates
+
+    @model_validator(mode="after")
+    def normalize_name(self):
+        self.name = self.name.strip()
+        if not self.name:
+            raise ValueError("작업구역 이름을 입력하세요.")
+        return self
+
+
 class QuestionInput(Answers):
     watcher_answers: dict[str, Literal["예", "아니오", "확인불가"]] = Field(default_factory=dict, max_length=4)
+
+
+class ZoneQuestionsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    task_id: StrictStr = Field(min_length=1, max_length=20)
+    answers: dict[str, StrictStr | StrictInt | StrictFloat | None] = Field(default_factory=dict, max_length=100)
+    watcher_answers: dict[str, Literal["예", "아니오", "확인불가"]] = Field(default_factory=dict, max_length=4)
+
+
+class ZoneAssessmentInput(ZoneQuestionsInput):
+    site_name: StrictStr = Field(min_length=1, max_length=200)
+    materials: MaterialSelection = Field(default_factory=MaterialSelection)
+    weather_region_id: str | None = Field(default=None, max_length=20)
+    weather_token: str | None = Field(default=None, max_length=12000)
+    weather_exposure: Literal["실외", "실내", "확인불가"] = "확인불가"
 
 
 class Comparison(BaseModel):
@@ -84,7 +186,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
 
     app = FastAPI(title="화재 위험도 평가 API", version="1.0.0", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=allowed_origins,
-                       allow_methods=["GET", "POST"], allow_headers=["Content-Type", "X-Access-Key"])
+                       allow_methods=["GET", "POST", "PUT", "DELETE"], allow_headers=["Content-Type", "X-Access-Key"])
 
     def authorize(x_access_key: Annotated[str | None, Header()] = None):
         if key and not hmac.compare_digest((x_access_key or "").encode(), key.encode()):
@@ -134,6 +236,227 @@ def create_app(storage_path=None, access_key=None, origins=None):
         except weather.WeatherError as error:
             raise HTTPException(503, str(error)) from None
 
+    def blueprint_result(image, include_data=False):
+        if image is None:
+            return None
+        result = {"현장ID": image["site_id"], "이미지ID": image["image_id"], "버전": image["version"],
+                  "파일명": image["filename"], "MIME형식": image["media_type"],
+                  "원본너비": image["width"], "원본높이": image["height"],
+                  "원본크기바이트": image["byte_size"], "등록시각": image["created_at"],
+                  "저장위치": "Postgres site_blueprint_images" if evaluation_storage.is_postgres_storage(storage)
+                  else "SQLite site_blueprint_images"}
+        if include_data:
+            result["이미지Base64"] = base64.b64encode(image["image_data"]).decode("ascii")
+        return result
+
+    @app.get("/api/sites/{site_id}/blueprint", dependencies=secured)
+    def get_site_blueprint(site_id: UUID):
+        return {"조감도": blueprint_result(evaluation_storage.current_site_blueprint(storage, str(site_id)), True)}
+
+    @app.get("/api/sites/{site_id}/blueprints/{image_id}", dependencies=secured)
+    def get_site_blueprint_version(site_id: UUID, image_id: UUID):
+        image = evaluation_storage.site_blueprint(storage, str(site_id), str(image_id))
+        if image is None:
+            raise HTTPException(404, "현장 조감도를 찾을 수 없습니다.")
+        return {"조감도": blueprint_result(image, True)}
+
+    @app.post("/api/sites/{site_id}/blueprints", dependencies=secured)
+    def upload_site_blueprint(site_id: UUID, body: BlueprintUpload):
+        try:
+            image_data = base64.b64decode(body.data_base64, validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(422, "이미지 데이터 인코딩이 올바르지 않습니다.") from None
+        if not image_data or len(image_data) > MAX_BLUEPRINT_BYTES:
+            raise HTTPException(413, "이미지 원본은 3MB 이하만 등록할 수 있습니다.")
+        width, height = inspect_blueprint(image_data, body.media_type)
+        filename = body.filename.replace("\\", "/").split("/")[-1].strip()
+        if not filename:
+            raise HTTPException(422, "이미지 파일명을 확인하세요.")
+        extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        expected_type = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(extension)
+        if expected_type != body.media_type:
+            raise HTTPException(422, "파일 확장자와 이미지 형식이 일치하지 않습니다.")
+        image = evaluation_storage.save_site_blueprint(
+            storage, image_id=str(uuid4()), site_id=str(site_id), filename=filename,
+            media_type=body.media_type, width=width, height=height,
+            image_data=image_data, created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+        return {"조감도": blueprint_result(image)}
+
+    @app.delete("/api/sites/{site_id}/blueprint", dependencies=secured)
+    def delete_site_blueprint(site_id: UUID):
+        return {"삭제됨": evaluation_storage.clear_current_site_blueprint(storage, str(site_id))}
+
+    def work_zone_result(zone):
+        return {"작업구역ID": zone["zone_id"], "현장ID": zone["site_id"], "이미지ID": zone["image_id"],
+                "이름": zone["name"], "영역유형": "사각형", "좌표": zone["coordinates"],
+                "생성시각": zone["created_at"], "수정시각": zone["updated_at"]}
+
+    def require_site_image(site_id, image_id):
+        image = evaluation_storage.site_blueprint_metadata(storage, str(site_id), str(image_id))
+        if image is None:
+            raise HTTPException(404, "해당 현장의 조감도 버전을 찾을 수 없습니다.")
+
+    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones", dependencies=secured)
+    def get_work_zones(site_id: UUID, image_id: UUID):
+        require_site_image(site_id, image_id)
+        zones = evaluation_storage.list_site_work_zones(storage, str(site_id), str(image_id))
+        return {"작업구역": [work_zone_result(zone) for zone in zones]}
+
+    @app.post("/api/sites/{site_id}/blueprints/{image_id}/zones", dependencies=secured)
+    def add_work_zone(site_id: UUID, image_id: UUID, body: WorkZoneInput):
+        require_site_image(site_id, image_id)
+        existing = evaluation_storage.list_site_work_zones(storage, str(site_id), str(image_id))
+        if any(zone["name"].casefold() == body.name.casefold() for zone in existing):
+            raise HTTPException(409, "같은 이름의 작업구역이 이미 있습니다.")
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        zone = evaluation_storage.create_site_work_zone(
+            storage, zone_id=str(uuid4()), site_id=str(site_id), image_id=str(image_id),
+            name=body.name, geometry_type="rectangle", coordinates=body.coordinates.model_dump(), timestamp=timestamp,
+        )
+        return {"작업구역": work_zone_result(zone)}
+
+    @app.put("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}", dependencies=secured)
+    def edit_work_zone(site_id: UUID, image_id: UUID, zone_id: UUID, body: WorkZoneInput):
+        require_site_image(site_id, image_id)
+        existing = evaluation_storage.list_site_work_zones(storage, str(site_id), str(image_id))
+        if any(zone["zone_id"] != str(zone_id) and zone["name"].casefold() == body.name.casefold() for zone in existing):
+            raise HTTPException(409, "같은 이름의 작업구역이 이미 있습니다.")
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        updated = evaluation_storage.update_site_work_zone(
+            storage, zone_id=str(zone_id), site_id=str(site_id), image_id=str(image_id),
+            name=body.name, coordinates=body.coordinates.model_dump(), timestamp=timestamp,
+        )
+        if not updated:
+            raise HTTPException(404, "작업구역을 찾을 수 없습니다.")
+        return {"작업구역": {"작업구역ID": str(zone_id), "현장ID": str(site_id), "이미지ID": str(image_id),
+                              "이름": body.name, "영역유형": "사각형", "좌표": body.coordinates.model_dump(),
+                              "수정시각": timestamp}}
+
+    @app.delete("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}", dependencies=secured)
+    def remove_work_zone(site_id: UUID, image_id: UUID, zone_id: UUID):
+        deleted = evaluation_storage.delete_site_work_zone(storage, str(zone_id), str(site_id), str(image_id))
+        return {"삭제됨": deleted}
+
+    def zone_task(task_id):
+        rows = engine.tasks.loc[(engine.tasks["작업ID"] == task_id) & (engine.tasks["화재위험여부"] == "1")]
+        if rows.empty or engine.get_questions_for_task(task_id).empty:
+            raise ValueError("화재위험성평가 질문이 연결된 공정 DB 작업을 선택하세요.")
+        return rows.iloc[0]
+
+    def zone_schema(body):
+        zone_task(body.task_id)
+        table = engine.get_prework_questions(body.task_id, body.answers)
+        if body.task_id != "H05":
+            if body.watcher_answers:
+                raise ValueError("화재감시자 추가질문은 이 작업에 연결되지 않았습니다.")
+            return {"questions": frame_rows(table), "watcher_context": None, "watcher_questions": []}
+        if set(body.watcher_answers) - set(engine.watcher_questions["추가질문ID"]):
+            raise ValueError("알 수 없는 화재감시자 추가질문입니다.")
+        return {"questions": frame_rows(table),
+                "watcher_context": watcher_input.context(body.task_id, body.answers, body.watcher_answers),
+                "watcher_questions": frame_rows(engine.watcher_questions[~engine.watcher_questions['추가질문ID'].isin(['W002', 'W003'])])}
+
+    def require_zone(site_id, image_id, zone_id):
+        zone = evaluation_storage.site_work_zone(storage, str(site_id), str(image_id), str(zone_id))
+        if zone is None:
+            raise HTTPException(404, "해당 조감도 버전의 작업구역을 찾을 수 없습니다.")
+        return zone
+
+    def zone_fingerprint(body):
+        value = body.model_dump(mode="json", exclude={"site_name", "weather_region_id", "weather_token", "weather_exposure"})
+        return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+    @app.get("/api/zone-tasks", dependencies=secured)
+    def zone_tasks():
+        return {"tasks": [{"task_id": row["작업ID"], "process": row["대공정"], "subprocess": row["세부공정"], "name": row["세부작업"]}
+                          for _, row in engine.tasks.iterrows()
+                          if row["화재위험여부"] == "1" and not engine.get_questions_for_task(row["작업ID"]).empty]}
+
+    @app.post("/api/zone-questions", dependencies=secured)
+    def zone_questions(body: ZoneQuestionsInput):
+        return zone_schema(body)
+
+    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessment", dependencies=secured)
+    def get_zone_assessment(site_id: UUID, image_id: UUID, zone_id: UUID):
+        require_zone(site_id, image_id, zone_id)
+        draft = evaluation_storage.load_zone_draft(storage, str(site_id), str(image_id), str(zone_id))
+        latest = evaluation_storage.latest_zone_assessment(storage, str(site_id), str(image_id), str(zone_id))
+        status = "미작성" if draft is None and latest is None else "완료" if latest and (draft is None or draft.get("입력SHA256") == latest.get("입력SHA256")) else "재계산 필요" if latest else "작성 중"
+        return {"초안": draft, "최근평가": latest, "입력상태": status}
+
+    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessments", dependencies=secured)
+    def zone_assessment_versions(site_id: UUID, image_id: UUID, zone_id: UUID):
+        require_zone(site_id, image_id, zone_id)
+        records = evaluation_storage.list_zone_assessments(storage, str(site_id), str(image_id), str(zone_id))
+        return {"평가버전": [{"평가ID": record["평가ID"], "평가일시": record["평가일시"],
+                           "작업ID": record["작업ID"], "위험지수": record["요약"]["위험지수"],
+                           "위험수준": record["요약"]["기본위험등급(잠정)"]} for record in records]}
+
+    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessments/{evaluation_id}", dependencies=secured)
+    def zone_assessment_version(site_id: UUID, image_id: UUID, zone_id: UUID, evaluation_id: UUID):
+        require_zone(site_id, image_id, zone_id)
+        record = next((item for item in evaluation_storage.list_zone_assessments(storage, str(site_id), str(image_id), str(zone_id))
+                       if item["평가ID"] == str(evaluation_id)), None)
+        if record is None:
+            raise HTTPException(404, "작업구역 평가기록을 찾을 수 없습니다.")
+        return {"평가": record}
+
+    @app.put("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessment", dependencies=secured)
+    def save_zone_assessment_draft(site_id: UUID, image_id: UUID, zone_id: UUID, body: ZoneAssessmentInput):
+        require_zone(site_id, image_id, zone_id)
+        zone_schema(body)
+        draft = {**body.model_dump(mode="json"), "현장ID": str(site_id), "이미지ID": str(image_id),
+                 "작업구역ID": str(zone_id), "입력SHA256": zone_fingerprint(body),
+                 "수정시각": datetime.now(timezone.utc).isoformat(timespec="microseconds")}
+        evaluation_storage.save_zone_draft(storage, str(site_id), str(image_id), str(zone_id), draft, draft["수정시각"])
+        latest = evaluation_storage.latest_zone_assessment(storage, str(site_id), str(image_id), str(zone_id))
+        return {"초안": draft, "입력상태": "완료" if latest and latest.get("입력SHA256") == draft["입력SHA256"] else "재계산 필요" if latest else "작성 중"}
+
+    @app.post("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/evaluate", dependencies=secured)
+    def evaluate_zone(site_id: UUID, image_id: UUID, zone_id: UUID, body: ZoneAssessmentInput):
+        zone = require_zone(site_id, image_id, zone_id)
+        task = zone_task(body.task_id)
+        table = engine.get_prework_questions(body.task_id, body.answers)
+        active = set(table.loc[table["적용상태"].eq("적용"), "항목ID"])
+        answers = {qid: value for qid, value in body.answers.items() if qid in active}
+        if answers.get("Q003") == "해당없음" or (body.task_id != "H05" and answers.get("Q004") == "해당없음"):
+            raise ValueError("Q003·Q004의 해당없음 근거는 아직 자동 검증하지 않습니다. 계산을 보류합니다.")
+        watcher_answers = None
+        if body.task_id == "H05":
+            zone_schema(body)
+            watcher_answers = dict(body.watcher_answers)
+            for wid, qid in (("W002", "Q019"), ("W003", "Q020")):
+                watcher_answers[wid] = {"있음": "예", "없음": "아니오", "확인불가": "확인불가"}.get(answers.get(qid), "확인불가")
+        elif body.watcher_answers:
+            raise ValueError("화재감시자 추가질문은 이 작업에 연결되지 않았습니다.")
+        previous = evaluation_storage.latest_zone_assessment(storage, str(site_id), str(image_id), str(zone_id))
+        identifier = str(uuid4())
+        builder = watcher_input.build if body.task_id == "H05" else engine.build_evaluation
+        record = builder(body.site_name, body.task_id, answers, watcher_answers,
+                         evaluation_id=identifier, evaluated_at=datetime.now(timezone.utc).isoformat(timespec="microseconds"))
+        image = evaluation_storage.site_blueprint_metadata(storage, str(site_id), str(image_id))
+        record.update({"현장ID": str(site_id), "작업구역ID": str(zone_id), "작업구역명": zone["name"],
+                       "현장조감도": blueprint_result(image), "작업명": task["세부작업"],
+                       "대공정": task["대공정"], "세부공정": task["세부공정"],
+                       "화재위험지수": record["요약"]["위험지수"],
+                       "위험수준": record["요약"]["기본위험등급(잠정)"],
+                       "점수계산기준": {"계산데이터SHA256": record["계산데이터SHA256"], "엔진SHA256": record["엔진SHA256"]},
+                       "입력SHA256": zone_fingerprint(body),
+                       "이전구역평가ID": previous["평가ID"] if previous else None,
+                       "근거스냅샷": {"standards": frame_rows(engine.standards), "accidents": frame_rows(engine.accidents)}})
+        if body.weather_region_id:
+            record["현장위치"] = weather.region(body.weather_region_id)
+            record["기상정보"] = weather.restore(body.weather_token, body.weather_region_id)
+            record["기상조건검토"] = weather_risk.assess(record["기상정보"], str(task["위험작업군"]), answers, body.weather_exposure)
+        try:
+            record["가연물정보"] = materials.snapshot(answers, body.materials.model_dump())
+        except materials.MaterialDataError as error:
+            raise HTTPException(503, str(error)) from error
+        save_zone_assessment_draft(site_id, image_id, zone_id, body)
+        evaluation_storage.save_zone_assessment(storage, str(site_id), str(image_id), str(zone_id), record)
+        return {"평가": record, "입력상태": "완료"}
+
     @app.post("/api/questions", dependencies=secured)
     def questions(body: QuestionInput):
         return {"questions": frame_rows(engine.get_prework_questions(body.task_id, body.answers)),
@@ -142,7 +465,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
 
     @app.post("/api/evaluate", dependencies=secured)
     def evaluate(body: EvaluationInput):
-        fingerprint = hashlib.sha256(json.dumps(body.model_dump(exclude={"request_id"}), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        fingerprint = hashlib.sha256(json.dumps(body.model_dump(mode="json", exclude={"request_id"}), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         identifier = str(body.request_id) if body.request_id else None
         if identifier and evaluation_storage.saved_exists(storage, identifier):
             existing = engine.load_evaluation(identifier, storage)
@@ -165,6 +488,15 @@ def create_app(storage_path=None, access_key=None, origins=None):
         record = builder(body.site_name, body.task_id, answers, watcher_answers,
                                          evaluation_id=identifier, evaluated_at=datetime.now(timezone.utc).isoformat(timespec="microseconds"))
         record["평가요청SHA256"] = fingerprint
+        if body.site_id:
+            record["현장ID"] = str(body.site_id)
+        if body.blueprint_image_id:
+            if not body.site_id:
+                raise ValueError("조감도를 평가기록에 연결하려면 현장 ID가 필요합니다.")
+            image = evaluation_storage.site_blueprint_metadata(storage, str(body.site_id), str(body.blueprint_image_id))
+            if image is None:
+                raise ValueError("선택한 조감도가 해당 현장에 등록되어 있지 않습니다.")
+            record["현장조감도"] = blueprint_result(image)
         record["작업명"] = record["요약"].get("작업명") or next((r.get("세부작업") for r in frame_rows(engine.tasks) if r["작업ID"] == body.task_id), body.task_id)
         record["근거스냅샷"] = {"standards": frame_rows(engine.standards), "accidents": frame_rows(engine.accidents)}
         if body.region_id:

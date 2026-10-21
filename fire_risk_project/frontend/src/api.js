@@ -2,12 +2,12 @@ const base = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 let accessKey = '';
 export function setAccessKey(value) { accessKey = value; }
 
-export async function api(path, body, signal) {
+export async function api(path, body, signal, methodOverride) {
   if (import.meta.env.PROD && !base) throw new Error('API 주소가 설정되지 않았습니다. VITE_API_BASE_URL을 설정하고 다시 배포하세요.');
   let response;
   try {
     response = await fetch(`${base}/api${path}`, {
-      method: body === undefined ? 'GET' : 'POST',
+      method: methodOverride || (body === undefined ? 'GET' : 'POST'),
       headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(accessKey ? { 'X-Access-Key': accessKey } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body), signal,

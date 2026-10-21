@@ -33,6 +33,16 @@ Vercel 프로젝트 두 개가 같은 GitHub 저장소를 사용합니다. 하�
 하나는 API를 배포합니다. API 프로젝트는 Vercel의 임시 파일시스템을 DB로
 사용하지 않으며 `DATABASE_URL`에 영구 Postgres 연결이 필요합니다.
 
+### 현장 조감도 저장
+
+조감도 원본과 버전 메타데이터는 평가와 같은 영구 DB의 `site_blueprint_images`,
+`site_current_blueprints` 테이블에 저장합니다. SQLite 로컬 실행은 같은 구조를 파일 DB에
+만들고, Vercel 운영에서는 기존 `DATABASE_URL` Postgres에 테이블을 자동 생성합니다.
+조감도 API는 기존 `APP_ACCESS_KEY` 인증을 적용하므로 원본 URL을 공개하지 않습니다.
+추가 Blob 서비스나 환경변수는 필요하지 않습니다. 원본 파일은 JPG/JPEG/PNG/WebP,
+3MB 이하이며 업로드 형식과 실제 이미지 시그니처·해상도를 서버에서 확인합니다.
+이미지 교체·삭제 시 이전 이미지 바이트는 평가기록이 참조할 수 있도록 버전으로 보존됩니다.
+
 React는 입력과 화면 표시를 담당합니다. 조건부 질문, 평가, 저장, 검색,
 상세 조회, 비교, 현황 집계는 Python API를 사용합니다.
 브라우저 localStorage나 브라우저 DB에 평가를 저장하지 않습니다.
@@ -98,6 +108,10 @@ create table if not exists evaluation_drafts (
   created_at double precision not null
 );
 ```
+
+조감도와 작업구역을 쓰는 버전에서는 API 시작 시 `site_blueprint_images`,
+`site_current_blueprints`, `site_work_zones` 테이블도 자동 생성합니다. 작업구역은
+`site_id`와 `image_id` 조합에 연결되며 좌표는 정규화된 사각형으로 저장됩니다.
 
 로컬에서 Supabase 연결을 시험하려면 macOS/Linux는 다음처럼 실행합니다.
 

@@ -1,4 +1,6 @@
 import { WeatherPicker } from './weather';
+import BlueprintUpload from './blueprint';
+import ZoneAssessment from './zone-assessment';
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, setAccessKey } from './api';
@@ -25,8 +27,13 @@ function Metrics({ items }) {
 }
 
 function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
-  const [site, setSite] = useState('');
-  const [weather, setWeather] = useState({region_id:'',snapshot:null,token:null,exposure:'확인불가'});
+  const siteInfo = (() => { try { return JSON.parse(localStorage.getItem('fire-risk-site-draft')) || {}; } catch { return {}; } })();
+  const [site, setSite] = useState(siteInfo.site_name || '');
+  const [siteId] = useState(() => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(siteInfo.site_id || '') ? siteInfo.site_id : crypto.randomUUID());
+  const [weather, setWeather] = useState({region_id:siteInfo.region_id || '',snapshot:null,token:null,exposure:'확인불가'});
+  const [blueprint, setBlueprint] = useState(null);
+  const [blueprintReady, setBlueprintReady] = useState(false);
+  const [zoneView, setZoneView] = useState({ zones: [], selected: null });
   const [answers, setAnswers] = useState({});
   const [extras, setExtras] = useState({});
   const [materials, setMaterials] = useState(emptyMaterials);
@@ -38,6 +45,9 @@ function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
   const [retry, setRetry] = useState(0);
   const [saved, setSaved] = useState(false);
   const requestId = useRef(null);
+  useEffect(() => {
+    try { localStorage.setItem('fire-risk-site-draft', JSON.stringify({site_id:siteId, site_name:site, region_id:weather.region_id || ''})); } catch { /* Evaluation remains usable when browser storage is unavailable. */ }
+  }, [siteId, site, weather.region_id]);
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -57,7 +67,7 @@ function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
     setBusy(true); setError(''); setNotice('');
     requestId.current ||= crypto.randomUUID();
     const watcherAnswers=buildWatcherAnswers(extras, (schema?.watcher_questions||[]).map(q=>q['추가질문ID']), schema?.watcher_context?.exception_required!==false);
-    try { setCurrent(await api('/evaluate', { site_name: site, region_id: weather.region_id || null, weather_token: weather.token || null, weather_exposure: weather.exposure || '확인불가', answers, materials, watcher_answers: watcherAnswers, watcher_ui_version: 'integrated-v1', request_id: requestId.current })); setSaved(true); setNotice('평가 완료 · 자동 저장됨'); onSaved(); onCompleted(); }
+    try { setCurrent(await api('/evaluate', { site_id: siteId, blueprint_image_id: blueprint?.image_id || null, site_name: site, region_id: weather.region_id || null, weather_token: weather.token || null, weather_exposure: weather.exposure || '확인불가', answers, materials, watcher_answers: watcherAnswers, watcher_ui_version: 'integrated-v1', request_id: requestId.current })); setSaved(true); setNotice('평가 완료 · 자동 저장됨'); onSaved(); onCompleted(); }
     catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
@@ -70,12 +80,14 @@ function NewEvaluation({ current, setCurrent, onSaved, onCompleted }) {
   const progress = inputProgress(schema,answers,extras,materials);
   return <><div className="section-heading"><div><p className="eyebrow">PRE-WORK CHECK</p><h2>작업 시작 전 평가</h2><p className="muted">현장 상태를 확인하고 평가 기록을 남기세요.</p></div><span className="badge">용접·용단</span></div>
     <form onSubmit={evaluate}><fieldset disabled={busy}>
-    <section className="panel"><div className="step-title"><span>01</span><h3>현장 정보</h3></div><label className="field">현장명<input value={site} maxLength={200} required placeholder="예: 서울 ○○ 신축공사" onChange={e => { invalidate(); setSite(e.target.value); }} /></label><WeatherPicker paused={busy || saved} value={weather} onChange={value=>{invalidate();setWeather(value);}} /></section>
-    <section className="panel"><div className="step-title"><span>02</span><h3>위험 조건</h3><small aria-live="polite">{loading ? '질문 확인 중…' : `${progress.answered} / ${progress.total} 응답 (하위 입력 포함) · 미응답 ${progress.missing} · 확인 필요 ${progress.unknown}`}</small></div>
+    <section className="panel"><div className="step-title"><span>01</span><h3>현장 기본정보</h3></div><label className="field">현장 이름<input value={site} maxLength={200} required placeholder="예: 서울 ○○ 신축공사" onChange={e => { invalidate(); setSite(e.target.value); }} /></label><WeatherPicker paused={busy || saved} value={weather} onChange={value=>{invalidate();setWeather(value);}} /></section>
+    <BlueprintUpload siteId={siteId} onChange={image=>{invalidate();setBlueprint(image);}} onReady={()=>setBlueprintReady(true)} onZoneChange={setZoneView} />
+    <ZoneAssessment siteId={siteId} image={blueprint} zones={zoneView.zones} selected={zoneView.selected} siteName={site} weather={weather} />
+    <section className="panel"><div className="step-title"><span>04</span><h3>기존 단일 작업 평가 · 용접·용단</h3><small aria-live="polite">{loading ? '질문 확인 중…' : `${progress.answered} / ${progress.total} 응답 (하위 입력 포함) · 미응답 ${progress.missing} · 확인 필요 ${progress.unknown}`}</small></div>
     <details className="guide"><summary>거리 입력과 용접방화포 질문 안내</summary><p>현재 거리 점수는 11m 미만/이상으로 구분합니다. 화재감시자의 거리 관련 조건은 정확히 11m를 포함하는 ‘11m 이내’입니다. 거리만으로 배치 의무 전체를 판정하지 않습니다.</p><p>불티 비산방지조치 실시 여부와 용접방화포 사용 시 성능인증 여부를 각각 확인합니다. 다른 방법을 쓴다면 방화포 미사용으로 응답하되 실제 비산방지조치 상태도 확인하세요.</p></details>
     <AssessmentQuestionGroups schema={schema} answers={answers} extras={extras} materials={materials} onMaterialsChange={value=>{invalidate();setMaterials(value);}} onExtraChange={(id,value)=>{invalidate();setExtras(a=>({...a,[id]:value}));}} loading={loading} onChange={(id,value)=>{invalidate();if(id==='Q001'&&value!=='있음')setMaterials(emptyMaterials());setAnswers(a=>({...a,[id]:value}));}} />
     {!schema && !loading && <button type="button" onClick={() => setRetry(n => n + 1)}>질문 다시 불러오기</button>}</section>
-    <div className="actions"><p className="muted">선택하지 않은 항목은 미입력으로 남습니다.</p><button className="primary" disabled={loading || !schema || busy}>평가하기 <span>→</span></button></div>
+    <div className="actions"><p className="muted">선택하지 않은 항목은 미입력으로 남습니다.</p><button className="primary" disabled={loading || !schema || !blueprintReady || busy}>평가하기 <span>→</span></button></div>
     </fieldset></form>
     {error && <p className="error" role="alert">{error}</p>}{notice && <p className="success" role="status">{notice}</p>}
     {current && <><Assessment record={current} /><div className="actions"><p className="muted">완료된 평가는 자동 저장됩니다. 결과 대시보드에서 이전 평가와의 변화를 확인하세요.</p><button onClick={save} disabled={busy || saved} className="primary">{saved ? '자동 저장됨' : busy ? '처리 중…' : '이 평가 저장'}</button></div></>}

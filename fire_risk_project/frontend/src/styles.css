@@ -80,5 +80,50 @@ a{color:#235d6b;text-underline-offset:3px}
 .weather-values dd { margin: 6px 0 0; font-size: 18px; font-weight: 600; }
 .weather-summary { overflow-wrap: anywhere; }
 .provisional-note { font-size: 13px; }
+.blueprint-card { min-width: 0; }
+.blueprint-card > .muted { margin-bottom: 14px; }
+.blueprint-empty,.blueprint-frame { border: 1px dashed #cbd7dc; border-radius: 8px; background: #f7f9fa; }
+.blueprint-empty { min-height: 210px; display: grid; place-items: center; color: #788b94; font-size: 13px; text-align: center; padding: 24px; }
+.blueprint-frame { max-height: 65vh; min-height: 210px; overflow: auto; display: flex; align-items: flex-start; justify-content: center; }
+.blueprint-stage { position: relative; flex: 0 0 auto; max-width: none; margin: 0 auto; }
+.blueprint-stage img { display: block; width: 100%; height: auto; }
+.zone-overlay { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.zone-overlay.drawing { pointer-events: auto; cursor: crosshair; touch-action: none; }
+.zone-shape { pointer-events: auto; cursor: pointer; }
+.zone-shape rect { fill: #ed913e55; stroke: #b65d1f; stroke-width: 3; vector-effect: non-scaling-stroke; }
+.zone-shape.selected rect { fill: #ff9f3f88; stroke: #d94d23; stroke-width: 5; }
+.zone-shape text { fill: #fff; stroke: #60310e; stroke-width: 3px; paint-order: stroke; font-size: 20px; font-weight: 700; pointer-events: none; }
+.zone-draft { fill: #418fa955; stroke: #126d81; stroke-width: 4; stroke-dasharray: 10 6; vector-effect: non-scaling-stroke; pointer-events: none; }
+.blueprint-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 10px 0; color: #627985; font-size: 11px; overflow-wrap: anywhere; }
+.blueprint-controls,.blueprint-actions,.blueprint-zoom { display: flex; align-items: center; gap: 8px; }
+.blueprint-controls { justify-content: space-between; flex-wrap: wrap; margin: 12px 0; }
+.blueprint-zoom span { min-width: 48px; text-align: center; font-size: 11px; color: #667d88; font-variant-numeric: tabular-nums; }
+.blueprint-zoom button,.blueprint-actions button { padding: 8px 12px; }
+.blueprint-file-input { display: none; }
+.blueprint-actions { flex-wrap: wrap; }
+.blueprint-card .error { margin-bottom: 0; }
+.work-zone-panel { border-top: 1px solid #e4eaed; padding-top: 18px; margin-top: 18px; }
+.work-zone-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.work-zone-heading h4 { margin: 0; color: #324d59; }
+.work-zone-heading span { color: #71848f; font-size: 11px; }
+.work-zone-list { display: grid; gap: 7px; margin: 12px 0; }
+.work-zone-row { display: flex; align-items: center; gap: 8px; border: 1px solid #e0e7eb; border-radius: 7px; padding: 7px; }
+.work-zone-row.selected { border-color: #d96d33; background: #fff8f2; }
+.work-zone-row button { padding: 6px 10px; font-size: 11px; }
+.work-zone-row .work-zone-select { margin-right: auto; border: 0; font-size: 13px; background: transparent; }
+.work-zone-rename { display: flex; align-items: end; gap: 10px; margin: 14px 0; }
+.work-zone-rename .field { flex: 1; }
+.work-zone-rename button { flex-shrink: 0; }
+.work-zone-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.work-zone-actions span { flex: 1 1 100%; color: #617986; font-size: 12px; }
+.work-zone-actions .primary { min-width: 120px; }
+.zone-assessment-panel { min-width: 0; }
+.zone-assessment-panel > h4 { margin: 20px 0 12px; color: #324d59; }
+.zone-assessment-statuses { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 18px; }
+.zone-assessment-statuses span { display: inline-block; border: 1px solid #dce6ea; border-radius: 999px; padding: 7px 11px; background: #f7f9fa; color: #526a77; font-size: 12px; }
+.zone-assessment-statuses span.selected { border-color: #d96d33; background: #fff3e9; color: #a74d22; font-weight: 700; }
+.zone-assessment-panel > .notice { margin-top: 14px; }
+@media(max-width:700px){.blueprint-frame,.blueprint-empty{min-height:160px}.blueprint-controls{align-items:flex-start}.blueprint-actions{width:100%}.blueprint-actions button{flex:1}.blueprint-zoom{margin-right:auto}}
+@media(max-width:700px){.work-zone-row{flex-wrap:wrap}.work-zone-row .work-zone-select{flex-basis:100%;text-align:left}.work-zone-row button{flex:1}.work-zone-rename{align-items:stretch;flex-direction:column}.work-zone-rename button{width:100%}}
 
 .header-slogan{flex:1;text-align:center;color:#235d6b;font-size:14px;font-weight:600;letter-spacing:-.2px}.header-slogan strong{color:#c43d36;font-weight:700}@media(max-width:700px){header{gap:8px}.header-slogan{font-size:12px;line-height:1.3}}
