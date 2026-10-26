@@ -79,6 +79,31 @@ class ZoneAssessmentTests(unittest.TestCase):
             self.assertEqual(self.client.get(self.url(index) + "/assessment").json()["입력상태"], "완료")
         self.assertEqual(self.client.get("/api/dashboard").json()["count"], 0)
         self.assertEqual(self.client.get("/api/evaluations").json(), [])
+        history = self.client.get("/api/zone-assessments", params={"site_id": self.site}).json()["\uD3C9\uAC00\uC774\uB825"]
+        self.assertEqual({row["\uC791\uC5C5\uAD6C\uC5EDID"] for row in history}, set(self.zones[:2]))
+        for record in (record for record in history if record["\uC791\uC5C5\uAD6C\uC5EDID"] in self.zones[:2]):
+            detail = self.client.get(f"/api/zone-assessments/{record['\uD3C9\uAC00ID']}")
+            self.assertEqual(detail.status_code, 200)
+            self.assertEqual(record["\uACC4\uC0B0\uAE30\uC900"], [detail.json()["\uD3C9\uAC00"]["\uACC4\uC0B0\uB370\uC774\uD130SHA256"],
+                                                                          detail.json()["\uD3C9\uAC00"]["\uC5D4\uC9C4SHA256"],
+                                                                          detail.json()["\uD3C9\uAC00"]["\uC694\uC57D"]["\uCD5C\uB300\uAC00\uC911\uC810\uC218"]])
+            self.assertEqual(detail.json()["\uD3C9\uAC00"]["\uC694\uC57D"]["\uC704\uD5D8\uC9C0\uC218"], record["\uC704\uD5D8\uC9C0\uC218"])
+        self.assertNotEqual(first["answers"]["Q002"], second["answers"]["Q002"])
+
+    def test_legacy_single_task_records_remain_readable(self):
+        body = self.payload("H05")
+        response = self.client.post("/api/evaluate", json={
+            "site_id": self.site, "blueprint_image_id": self.image, "site_name": body["site_name"],
+            "task_id": body["task_id"], "answers": body["answers"], "materials": body["materials"],
+            "watcher_answers": body["watcher_answers"], "watcher_ui_version": "integrated-v1",
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        legacy = response.json()
+        rows = self.client.get("/api/evaluations").json()
+        self.assertTrue(any(row["\uD3C9\uAC00ID"] == legacy["\uD3C9\uAC00ID"] for row in rows))
+        loaded = self.client.get(f"/api/evaluations/{legacy['\uD3C9\uAC00ID']}")
+        self.assertEqual(loaded.status_code, 200)
+        self.assertEqual(loaded.json()["\uC694\uC57D"]["\uC704\uD5D8\uC9C0\uC218"], legacy["\uC694\uC57D"]["\uC704\uD5D8\uC9C0\uC218"])
 
     def test_draft_switch_recalculation_versions_and_reload(self):
         first = self.payload("H05", Q002=3)

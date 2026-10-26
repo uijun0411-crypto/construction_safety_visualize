@@ -61,7 +61,10 @@ class ApiTests(unittest.TestCase):
         with TestClient(create_app(self.storage, access_key="test-key")) as restarted:
             self.assertEqual(restarted.get(f"/api/evaluations/{identifier}", headers={"X-Access-Key": "test-key"}).json(), record)
         self.assertEqual(len(self.client.get("/api/evaluations?site_keyword=테스트").json()), 1)
-        self.assertEqual(self.client.get("/api/dashboard").json()["count"], 1)
+        dashboard = self.client.get("/api/dashboard").json()
+        self.assertEqual(dashboard["count"], 1)
+        self.assertEqual(dashboard["site_count"], 1)
+        self.assertEqual(dashboard["trends"][0]["grade"], record["요약"]["기본위험등급(잠정)"])
         self.assertEqual(self.client.get("/api/dashboard?site=없는현장").json()["count"], 0)
 
     def test_site_id_is_persisted_and_legacy_records_remain_supported(self):

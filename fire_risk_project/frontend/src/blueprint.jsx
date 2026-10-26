@@ -239,6 +239,7 @@ export default function BlueprintUpload({ siteId, initialImageId = '', initialZo
   const shown = pending || image;
   return <section className="panel blueprint-card">
     <div className="step-title"><span>02</span><h3>현장 조감도 등록</h3></div>
+    <p className="field-help">화재위험 작업구역을 지정할 수 있도록 현장 전체 구조가 보이는 조감도 또는 전경 사진을 업로드하세요.</p>
     <p className="muted">원본 비율로 미리보기합니다. 등록본을 교체하면 이전 평가에서 사용한 이미지 버전은 보존됩니다.</p>
     {preview ? <div className="blueprint-frame" aria-label="현장 조감도 미리보기">
       <div className="blueprint-stage" style={{ width: `${zoom * 100}%` }} data-original-width={shown?.['원본너비'] || ''} data-original-height={shown?.['원본높이'] || ''}>
@@ -279,6 +280,7 @@ export default function BlueprintUpload({ siteId, initialImageId = '', initialZo
     </div>
     {image && !pending && <div className="work-zone-panel">
       <div className="work-zone-heading"><h4>작업구역</h4><span>{zones.length}개 · 이미지 버전 {image['버전']}</span></div>
+      <p className="field-help">조감도에서 화재위험 작업이 이루어지는 위치를 지정하세요. 여러 구역을 추가할 수 있습니다.</p>
       <p className="muted">조감도에서 드래그해 사각형을 지정하세요. 좌표는 이미지 기준 0–1로 저장됩니다.</p>
       <div className="work-zone-list" aria-label="작업구역 목록">
         {!zones.length && <p className="empty">등록된 작업구역이 없습니다.</p>}

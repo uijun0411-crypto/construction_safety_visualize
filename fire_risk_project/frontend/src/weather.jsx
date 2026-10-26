@@ -28,12 +28,12 @@ export function WeatherPicker({value,onChange,paused=false}) {
   api(`/weather?region_id=${encodeURIComponent(value.region_id)}`,undefined,controller.signal).then(result=>onChange({...valueRef.current,region_id:value.region_id,...result})).catch(e=>{if(e.name!=='AbortError')setError(e.message);}).finally(()=>{if(!controller.signal.aborted)setBusy(false);});
   return ()=>controller.abort();
  },[value.region_id,retry,paused]);
- return <div className="weather-card"><h4>현장 지역</h4><div className="questions">
+ return <div className="weather-card"><h4>현장 지역</h4><p className="field-help">작업현장이 위치한 시·도와 시·군·구를 선택하세요. 선택한 지역의 기상정보가 조회됩니다.</p><div className="questions">
   <label className="field">시·도<select value={province} onChange={e=>{setProvince(e.target.value);onChange({...value,region_id:'',snapshot:null,token:null});}}><option value="">지역 선택 (선택사항)</option>{[...new Set(catalogue.map(r=>r.province))].map(p=><option key={p}>{p}</option>)}</select></label>
   <label className="field">시·군·구<select value={value.region_id} disabled={!province} onChange={e=>onChange({...value,region_id:e.target.value,snapshot:null,token:null})}><option value="">현장 위치 선택</option>{catalogue.filter(r=>r.province===province).map(r=><option key={r.id} value={r.id}>{r.district}</option>)}</select></label>
-  <label className="field">작업장 외부 기상 노출<select value={value.exposure||'확인불가'} onChange={e=>onChange({...value,exposure:e.target.value})}><option value="확인불가">확인 필요</option><option value="실외">실외 노출</option><option value="실내">실내 작업</option></select><small>실외 작업은 지역 기상조건 검토에 사용합니다. 지붕·개구부 등으로 외기에 노출된 작업도 실외 노출로 선택하세요.</small></label>
+  <label className="field">작업장 외부 기상 노출<select value={value.exposure||'확인불가'} onChange={e=>onChange({...value,exposure:e.target.value})}><option value="확인불가">확인 필요</option><option value="실외">실외 노출</option><option value="실내">실내 작업</option></select><small>실제 작업장소가 비, 바람, 기온 등 외부 기상조건의 영향을 받는지 확인하세요.</small></label>
  </div>{catalogueError&&<p className="error" role="alert">지역 목록 조회 실패: {catalogueError} <button type="button" onClick={()=>setCatalogueRetry(n=>n+1)}>다시 불러오기</button></p>}
-  <h4>현장 기상정보</h4><div aria-live="polite">{busy&&<p role="status">기상정보 조회 중…</p>}{error&&<p className="error" role="alert">기상정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.<br/><small>{error}</small></p>}{value.snapshot&&<WeatherSummary snapshot={value.snapshot}/>}</div>
+  <h4>현장 기상정보</h4><p className="field-help">선택한 지역의 기상정보입니다. 실제 현장 상태와 차이가 있을 수 있으므로 작업 전 현장 상태도 확인하세요.</p><div aria-live="polite">{busy&&<p role="status">기상정보 조회 중…</p>}{error&&<p className="error" role="alert">기상정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.<br/><small>{error}</small></p>}{value.snapshot&&<WeatherSummary snapshot={value.snapshot}/>}</div>
  <button type="button" disabled={!value.region_id||busy} onClick={()=>{onChange({...value,snapshot:null,token:null});setRetry(n=>n+1);}}>기상정보 다시 조회</button>
  <p className="muted">기상청 단기예보(getVilageFcst)를 참고자료로 조회합니다. 조회 실패 또는 조회 중에도 평가할 수 있고 완료된 자료만 저장됩니다.</p></div>;
 }

@@ -457,6 +457,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
                          "작업구역좌표": record.get("작업구역좌표"), "평가일시": record.get("평가일시"),
                          "작업ID": record.get("작업ID"), "작업명": record.get("작업명"),
                          "위험지수": summary.get("위험지수"), "위험수준": summary.get("기본위험등급(잠정)"),
+                         "계산기준": [record.get("계산데이터SHA256"), record.get("엔진SHA256"), summary.get("최대가중점수")],
                          "이전구역평가ID": record.get("이전구역평가ID")})
         return {"평가이력": rows}
 
@@ -647,6 +648,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
             grade = summary["기본위험등급(잠정)"]
             grades[grade] = grades.get(grade, 0) + 1
             trends.append({"id": record["평가ID"], "date": record["평가일시"], "score": summary["위험지수"],
+                           "grade": grade,
                            "group": [record.get("계산데이터SHA256"), record.get("엔진SHA256"), summary["최대가중점수"]]})
         return {"sites": sites, "count": len(records), "site_count": history["현장명"].nunique(),
                 "held_count": sum(r["요약"]["최종판정"].startswith("보류") for r in records),

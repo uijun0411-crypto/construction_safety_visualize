@@ -8,7 +8,7 @@ import { ZonePreviousComparison } from './zone-dashboard';
 const blank = () => ({ task_id: '', answers: {}, watcher_answers: {}, materials: emptyMaterials() });
 const names = { '미작성': '미작성', '작성 중': '작성 중', '완료': '완료', '재계산 필요': '재계산 필요' };
 
-export default function ZoneAssessment({ siteId, image, zones, selected, siteName, weather, reassessment = null }) {
+export default function ZoneAssessment({ siteId, image, zones, selected, siteName, weather, reassessment = null, onEvaluated }) {
   const [tasks, setTasks] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [states, setStates] = useState({});
@@ -113,6 +113,7 @@ export default function ZoneAssessment({ siteId, image, zones, selected, siteNam
       const current = draftsRef.current[key] || draft;
       const response = await api(`${path}/evaluate`, bodyFor(current));
       setResults(values => ({ ...values, [key]: response['평가'] }));
+      onEvaluated?.(response['\uD3C9\uAC00']);
       setStates(values => ({ ...values, [key]: '완료' }));
       setNotice('구역 평가가 저장되었습니다.');
     } catch (e) { setError(e.message); }
@@ -124,6 +125,7 @@ export default function ZoneAssessment({ siteId, image, zones, selected, siteNam
   const progress = inputProgress(schema, draft.answers || {}, extras, draft.materials || emptyMaterials());
   return <section className="panel zone-assessment-panel">
     <div className="step-title"><span>03</span><h3>구역별 화재위험성평가</h3></div>
+    <p className="field-help">평가할 구역을 선택하고 해당 구역의 작업 종류와 위험조건을 입력하세요.</p>
     <div className="zone-assessment-statuses">{visibleZones.map(zone => {
       const zoneKey = `${imageId}/${zone.zone_id}`;
       return <span key={zone.zone_id} className={zone.zone_id === zoneId ? 'selected' : ''}>{zone.name} · {names[states[zoneKey]] || '미작성'}</span>;
@@ -135,6 +137,7 @@ export default function ZoneAssessment({ siteId, image, zones, selected, siteNam
           <option value="">공정 DB의 작업을 선택하세요</option>
           {tasks.map(task => <option key={task.task_id} value={task.task_id}>{task.process} · {task.subprocess} · {task.name}</option>)}
         </select>
+        <small className="field-help">선택한 작업에 맞는 위험성평가 질문이 표시됩니다.</small>
       </label>
       {draft.task_id && <>
         <p className="muted">{loading ? '질문 확인 중…' : `${progress.answered} / ${progress.total} 응답 · 미응답 ${progress.missing} · 확인 필요 ${progress.unknown}`}</p>

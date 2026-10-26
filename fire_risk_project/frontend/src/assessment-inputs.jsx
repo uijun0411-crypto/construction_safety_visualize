@@ -24,7 +24,7 @@ export function ConditionalQuestion({q,number,value,onChange,idPrefix=''}) {
  return <div className={'question-card'+(disabled?' inactive':'')}><label className="field question" htmlFor={idPrefix+'question-'+id}><span><em>{String(number).padStart(2,'0')}</em>{({'Q002':'주변 가연물까지의 거리','Q019':'작업점 아래쪽 가연물의 불티 착화 우려','Q020':'금속 구조물 반대편 가연물의 열전도·복사 착화 우려'}[id]||q['확인항목'])}</span>
  {q['입력형식']==='선택'?<select id={idPrefix+'question-'+id} disabled={disabled} value={value} onChange={e=>onChange(id,e.target.value)}><option value="">선택하세요</option>{q['선택지·허용값'].split('/').map(v=>v.trim()).map(v=><option key={v}>{v}</option>)}</select>:<input id={idPrefix+'question-'+id} type="number" min="0" step="any" disabled={disabled} value={value} placeholder={q['단위']} onChange={e=>onChange(id,e.target.value===''?'':Number(e.target.value))}/>}
  {disabled?<small className="conditional-message">{q['적용상태']==='선행응답필요'?'주변 가연물 존재 여부에 응답한 뒤 입력할 수 있습니다.':'주변 가연물이 없다는 응답에 따라 거리 질문은 이번 평가에서 제외됩니다.'}</small>:<small>{q['사전안내']}</small>}
- </label></div>
+ </label><details className="id-help"><summary>자세한 판단 기준</summary><p>{q['질문']}</p></details></div>
 }
 const watchLabels={
  W001:['거리 입력만으로 찾기 어려운 건물 내부·구조물의 가연물이 있습니까?','주변 거리 항목에 이미 입력한 가연물은 제외하고, 벽·천장·건물 내부나 개구부 안쪽에 숨겨져 따로 확인해야 하는 가연물만 답하세요.'],
@@ -37,7 +37,7 @@ export function FireWatchConditions({questions=[],extras,onChange,startNumber=0,
  const id=q['추가질문ID'];const [title,note]=watchLabels[id]||[q['질문'],''];
  if(id==='W004')return <IntegratedFireWatch key={id} number={startNumber+i+1} deployment={deployment} exception={extras.W004??''} onDeploymentChange={onDeploymentChange} onExceptionChange={value=>onChange('W004',value)} context={context} question={q} idPrefix={idPrefix}/>;
  const labels=id==='W004'?{'아니오':'적용하지 않음','예':'적용','확인불가':'확인 필요'}:{'예':'예','아니오':'아니오','확인불가':'확인불가'};
- return <div className="question-card" key={id}><label className="field question" htmlFor={idPrefix+'watch-'+id}><span><em>{String(startNumber+i+1).padStart(2,'0')}</em>{title}</span><small>{note}</small><select id={idPrefix+'watch-'+id} required value={extras[id]??''} onChange={e=>onChange(id,e.target.value)}><option value="">선택하세요</option>{Object.entries(labels).map(([v,label])=><option key={v} value={v}>{label}</option>)}</select><details className="id-help"><summary>판단 기준</summary><p>{id==='W001'?note:q['질문']}</p></details></label></div>
+ return <div className="question-card" key={id}><label className="field question" htmlFor={idPrefix+'watch-'+id}><span><em>{String(startNumber+i+1).padStart(2,'0')}</em>{title}</span><small>{note}</small><select id={idPrefix+'watch-'+id} required value={extras[id]??''} onChange={e=>onChange(id,e.target.value)}><option value="">선택하세요</option>{Object.entries(labels).map(([v,label])=><option key={v} value={v}>{label}</option>)}</select></label><details className="id-help"><summary>자세한 판단 기준</summary><p>{q['질문']}</p></details></div>
  })}</div>
 }
 

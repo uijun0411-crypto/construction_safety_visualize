@@ -155,3 +155,19 @@ a{color:#235d6b;text-underline-offset:3px}
 .zone-history-table-wrap{max-width:100%;overflow-x:auto}.zone-history-table{min-width:900px}.zone-history-table tr[data-evaluation-id]{cursor:pointer}.zone-history-table tr:hover{background:#f7fafb}
 .zone-history-detail{min-width:0}.zone-history-blueprint{position:relative;max-height:60vh;overflow:auto;border:1px solid #d7e1e5;border-radius:8px;background:#f7f9fa}.zone-history-blueprint img{display:block;width:100%;height:auto}.zone-history-blueprint svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.zone-history-blueprint rect{fill:#ed913e55;stroke:#c45427;stroke-width:4;vector-effect:non-scaling-stroke}.zone-history-blueprint text{fill:#fff;stroke:#263943;stroke-width:3px;paint-order:stroke;font-size:20px;font-weight:800}
 @media(max-width:700px){.zone-history-table{min-width:900px}.zone-history-blueprint{max-height:50vh}.zone-history-blueprint img,.zone-history-blueprint svg{min-width:540px}}
+
+.metric small{display:block;margin-top:10px;color:#6d7f89;font-size:11px;line-height:1.5}
+.trend-selectors{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;max-width:800px;margin:20px auto}
+.trend-legend{display:flex;flex-wrap:wrap;justify-content:center;gap:16px;margin:0 auto 20px;color:#6d7f89;font-size:11px}.trend-legend span{display:flex;align-items:center;gap:6px}.trend-legend i{display:inline-block;width:9px;height:9px;border-radius:50%}
+
+.evaluation-steps{list-style:none;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:0 0 20px;padding:0}
+.evaluation-steps li{display:flex;align-items:center;gap:9px;min-width:0;padding:12px;border:1px solid #dfe6e9;border-radius:8px;background:#fff;color:#526a77;font-size:12px;line-height:1.4}
+.evaluation-steps li span{flex:0 0 auto;display:grid;place-items:center;width:25px;height:25px;border-radius:6px;background:#fff2e7;color:#b45b27;font-size:10px;font-weight:700}
+.field-help{display:block;margin:0 0 14px;color:#687e89;font-size:12px;font-weight:400;line-height:1.6;overflow-wrap:anywhere}
+.field>.field-help{margin:0}
+.weather-card>.field-help{margin-bottom:16px}
+.question-card .id-help{margin-top:10px;padding-top:8px;border-top:1px solid #edf0f2}
+.id-help p{margin:8px 0 0;line-height:1.65;overflow-wrap:anywhere}
+.work-zone-panel>.field-help{margin-top:8px}
+@media(max-width:900px){.evaluation-steps{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:700px){.evaluation-steps{grid-template-columns:1fr 1fr;gap:8px}.evaluation-steps li{padding:10px;font-size:11px}.field-help{font-size:12px;line-height:1.55}.question-card .id-help{margin-top:12px}}

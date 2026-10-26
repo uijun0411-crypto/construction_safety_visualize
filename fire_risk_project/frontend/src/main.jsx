@@ -1,18 +1,16 @@
 import { WeatherPicker } from './weather';
 import BlueprintUpload from './blueprint';
 import ZoneAssessment from './zone-assessment';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, setAccessKey } from './api';
 import './styles.css';
 import Assessment, { colors } from './assessment-result';
-import { AssessmentQuestionGroups, inputProgress } from './assessment-inputs';
 import Comparison from './comparison';
 import PreviousComparison from './previous-comparison';
 import ZoneDashboard from './zone-dashboard';
 import ZoneHistoryDetail from './zone-history';
-import { emptyMaterials } from './materials';
-import { buildWatcherAnswers } from './watcher-payload';
+import { buildTrendPoints, formatRiskIndex, groupLegacySeries, groupZoneSeries, zoneRecordKey } from './risk-trend-data';
 
 const text = value => value == null ? '—' : typeof value === 'boolean' ? (value ? '예' : '아니오') : typeof value === 'object' ? JSON.stringify(value) : String(value);
 const score = value => value == null ? '미산정' : Number(value).toFixed(2);
@@ -25,76 +23,91 @@ function Table({ rows }) {
 }
 
 function Metrics({ items }) {
-  return <div className="metrics">{items.map(([label, value]) => <div className="metric" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>;
+  return <div className="metrics">{items.map(([label, value, description]) => <div className="metric" key={label}><span>{label}</span><strong>{value}</strong>{description && <small>{description}</small>}</div>)}</div>;
 }
 
-function NewEvaluation({ current, setCurrent, onSaved, onCompleted, reassessment }) {
+function RiskTrend({ site, zoneRecords, legacyTrends }) {
+  const [zoneKey, setZoneKey] = useState('');
+  const [seriesKey, setSeriesKey] = useState('');
+  const siteRecords = useMemo(() => zoneRecords.filter(record => record['현장명'] === site), [zoneRecords, site]);
+  const zones = useMemo(() => [...new Map(siteRecords.map(record => [zoneRecordKey(record), record])).entries()], [siteRecords]);
+  const activeZoneKey = zones.some(([key]) => key === zoneKey) ? zoneKey : zones[0]?.[0] || '';
+  const zoneGroups = useMemo(() => {
+    return groupZoneSeries(siteRecords, site, activeZoneKey).map(({ key, records }) => ({
+      key: `zone:${key}`, records,
+      label: `${records[0]['작업명']} · 점수규칙 ${String(records[0]['계산기준']?.[0] || '').slice(0, 8)} · 분모 ${records[0]['계산기준']?.[2] ?? '자료 없음'}`,
+      zone: true,
+    }));
+  }, [siteRecords, site, activeZoneKey]);
+  const legacyGroups = useMemo(() => {
+    return groupLegacySeries(legacyTrends, site).map(({ key, records }) => ({
+      key: `legacy:${key}`, records,
+      label: `기존 단일 작업 · 점수규칙 ${String(records[0].group[0] || '').slice(0, 8)} · 분모 ${records[0].group[2] ?? '자료 없음'}`,
+      zone: false,
+    }));
+  }, [legacyTrends, site]);
+  const series = zoneGroups.length ? zoneGroups : legacyGroups;
+  const activeSeries = series.find(item => item.key === seriesKey) || series[0];
+  const points = useMemo(() => {
+    return activeSeries ? buildTrendPoints(activeSeries.records, activeSeries.zone) : [];
+  }, [activeSeries]);
+  const plotted = points.filter(point => point.score != null);
+  const start = plotted.length ? new Date(plotted[0].date).getTime() : 0;
+  const end = plotted.length ? new Date(plotted[plotted.length - 1].date).getTime() : 0;
+  const x = point => plotted.length < 2 || end === start ? 400 : 60 + (new Date(point.date).getTime() - start) / (end - start) * 680;
+  const y = point => 220 - point.score * 1.9;
+  let path = '';
+  let inSegment = false;
+  for (const point of points) {
+    if (point.score == null) { inSegment = false; continue; }
+    path += `${inSegment ? ' L' : 'M'}${x(point).toFixed(1)},${y(point).toFixed(1)}`;
+    inSegment = true;
+  }
+  return <>
+    <div className="trend-selectors">
+      <label className="field">작업구역<select value={activeZoneKey} onChange={event => { setZoneKey(event.target.value); setSeriesKey(''); }} disabled={!zones.length}>
+        {!zones.length && <option value="">선택한 현장에 구역 평가가 없습니다</option>}
+        {zones.map(([key, record]) => <option key={key} value={key}>{record['작업구역명']} · {record['작업명']}</option>)}
+      </select></label>
+      <label className="field">작업·점수규칙<select value={activeSeries?.key || ''} onChange={event => setSeriesKey(event.target.value)} disabled={!series.length}>
+        {!series.length && <option value="">표시할 평가기록이 없습니다</option>}
+        {series.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
+      </select></label>
+    </div>
+    <p className="muted">위험지수 = 대표 질문의 가중점수 합계 ÷ 최대가중점수 × 100입니다. 표시된 분모는 평가 당시 최대가중점수이며, 점수규칙 데이터나 엔진 버전이 다른 기록은 같은 추이로 연결하지 않습니다.</p>
+    {!site ? <p className="empty">현장을 선택하면 해당 현장 또는 작업구역의 기록을 표시합니다.</p> : !points.length ? <p className="empty">선택한 현장에 표시할 위험지수 기록이 없습니다.</p> : <>
+      <div className="trend" role="img" aria-label="선택한 현장 또는 작업구역의 평가 시점별 위험지수 변화">
+        <svg viewBox="0 0 800 280" preserveAspectRatio="xMidYMid meet">
+          {[0, 20, 40, 60, 80, 100].map(value => <g key={value}><line x1="55" x2="760" y1={220 - value * 1.9} y2={220 - value * 1.9} stroke="#dbe2e5" /><text x="8" y={224 - value * 1.9}>{value}</text></g>)}
+          <path d={path} fill="none" stroke="#2b7880" strokeWidth="2" />
+          {plotted.map(point => <g key={point.id}><circle cx={x(point)} cy={y(point)} r="5" fill={colors[point.grade] || colors['확인필요']}><title>{`${date(point.date)} · ${formatRiskIndex(point.score)} · ${point.grade || '위험수준 자료 없음'} · 이전 대비 ${point.delta == null ? '비교 없음' : `${point.delta > 0 ? '+' : ''}${point.delta.toFixed(2)}점`}`}</title></circle><text x={x(point)} y={y(point) - 11} textAnchor="middle">{Number(point.score).toFixed(2)}</text></g>)}
+        </svg>
+      </div>
+      <div className="trend-legend">{['낮음', '주의', '높음', '매우높음', '확인필요'].map(grade => <span key={grade}><i style={{ background: colors[grade] }} />{grade}</span>)}</div>
+      <div className="table-wrap" tabIndex="0"><table><thead><tr><th>평가일시</th><th>위험지수</th><th>위험수준</th><th>이전 평가 대비</th></tr></thead><tbody>
+        {points.map(point => <tr key={point.id}><td>{date(point.date)}</td><td>{formatRiskIndex(point.score)}</td><td>{point.grade || '자료 없음'}</td><td>{point.delta == null ? '비교 없음' : `${point.delta > 0 ? '+' : ''}${point.delta.toFixed(2)}점`}</td></tr>)}
+      </tbody></table></div>
+    </>}
+  </>;
+}
+
+function NewEvaluation({ onZoneSaved, reassessment }) {
   const siteInfo = (() => { try { return JSON.parse(localStorage.getItem('fire-risk-site-draft')) || {}; } catch { return {}; } })();
   const [site, setSite] = useState(reassessment?.record?.['현장명'] || siteInfo.site_name || '');
   const [siteId] = useState(() => reassessment?.record?.['현장ID'] || (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(siteInfo.site_id || '') ? siteInfo.site_id : crypto.randomUUID()));
   const [weather, setWeather] = useState({region_id:reassessment?.inputs?.weather_region_id || reassessment?.record?.['현장위치']?.id || siteInfo.region_id || '',snapshot:null,token:null,exposure:reassessment?.inputs?.weather_exposure || '확인불가'});
   const [blueprint, setBlueprint] = useState(null);
-  const [blueprintReady, setBlueprintReady] = useState(false);
   const [zoneView, setZoneView] = useState({ zones: [], selected: null });
-  const [answers, setAnswers] = useState({});
-  const [extras, setExtras] = useState({});
-  const [materials, setMaterials] = useState(emptyMaterials);
-  const [schema, setSchema] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [retry, setRetry] = useState(0);
-  const [saved, setSaved] = useState(false);
-  const requestId = useRef(null);
   useEffect(() => {
     try { localStorage.setItem('fire-risk-site-draft', JSON.stringify({site_id:siteId, site_name:site, region_id:weather.region_id || ''})); } catch { /* Evaluation remains usable when browser storage is unavailable. */ }
   }, [siteId, site, weather.region_id]);
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true);
-    api('/questions', { answers, watcher_answers: buildWatcherAnswers(extras, ['W001','W002','W003','W004']) }, controller.signal).then(data => { setSchema(data); setError(''); }).catch(e => {
-      if (e.name !== 'AbortError') { setSchema(null); setError(e.message); }
-    }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [answers, extras, retry]);
-  function invalidate() { requestId.current = null; setCurrent(null); setSaved(false); setNotice(''); setError(''); }
-  async function evaluate(event) {
-    event.preventDefault();
-    if ((schema?.watcher_questions || []).filter(q=>q['추가질문ID']!=='W004'||schema?.watcher_context?.exception_required!==false).some(q=>!extras[q['추가질문ID']])) {
-      setError('위험 조건을 모두 선택하세요. 판단이 어려우면 확인불가 또는 확인 필요를 선택하세요.');
-      return;
-    }
-    if(answers.Q001==='있음'&&!materials.ids.length&&!materials.custom_names.length&&!materials.unknown){setError('주변 가연물 종류를 선택하거나 직접 입력 또는 가연물 종류 확인 필요를 선택하세요.');return;}
-    setBusy(true); setError(''); setNotice('');
-    requestId.current ||= crypto.randomUUID();
-    const watcherAnswers=buildWatcherAnswers(extras, (schema?.watcher_questions||[]).map(q=>q['추가질문ID']), schema?.watcher_context?.exception_required!==false);
-    try { setCurrent(await api('/evaluate', { site_id: siteId, blueprint_image_id: blueprint?.image_id || null, site_name: site, region_id: weather.region_id || null, weather_token: weather.token || null, weather_exposure: weather.exposure || '확인불가', answers, materials, watcher_answers: watcherAnswers, watcher_ui_version: 'integrated-v1', request_id: requestId.current })); setSaved(true); setNotice('평가 완료 · 자동 저장됨'); onSaved(); onCompleted(); }
-    catch (e) { setError(e.message); }
-    finally { setBusy(false); }
-  }
-  async function save() {
-    setBusy(true); setError('');
-    try { const result = await api(`/evaluations/${current['평가ID']}/save`, {}); setSaved(true); setNotice(result['저장상태']); onSaved(); }
-    catch (e) { setError(e.message); }
-    finally { setBusy(false); }
-  }
-  const progress = inputProgress(schema,answers,extras,materials);
   return <><div className="section-heading"><div><p className="eyebrow">PRE-WORK CHECK</p><h2>작업 시작 전 평가</h2><p className="muted">현장 상태를 확인하고 평가 기록을 남기세요.</p></div><span className="badge">용접·용단</span></div>
-    <form onSubmit={evaluate}><fieldset disabled={busy}>
-    <section className="panel"><div className="step-title"><span>01</span><h3>현장 기본정보</h3></div><label className="field">현장 이름<input value={site} maxLength={200} required placeholder="예: 서울 ○○ 신축공사" onChange={e => { invalidate(); setSite(e.target.value); }} /></label><WeatherPicker paused={busy || saved} value={weather} onChange={value=>{invalidate();setWeather(value);}} /></section>
+    <ol className="evaluation-steps" aria-label="평가 이용 순서">{['현장정보 입력','조감도 등록','작업구역 지정','구역별 위험조건 입력','평가결과 확인'].map((step, index) => <li key={step}><span>{String(index + 1).padStart(2, '0')}</span>{step}</li>)}</ol>
+    <section className="panel"><div className="step-title"><span>01</span><h3>현장 기본정보</h3></div><label className="field">현장 이름<input value={site} maxLength={200} required placeholder="예: 서울 ○○ 신축공사" onChange={e => setSite(e.target.value)} /><small className="field-help">화재위험성평가를 진행할 현장의 이름을 입력하세요.</small></label><WeatherPicker value={weather} onChange={setWeather} /></section>
     <BlueprintUpload key={`${siteId}/${reassessment?.record?.['현장조감도']?.['이미지ID'] || ''}`} siteId={siteId}
       initialImageId={reassessment?.record?.['현장조감도']?.['이미지ID'] || ''} initialZoneId={reassessment?.record?.['작업구역ID'] || ''}
-      onChange={image=>{invalidate();setBlueprint(image);}} onReady={()=>setBlueprintReady(true)} onZoneChange={setZoneView} />
-    <ZoneAssessment key={`${siteId}/${reassessment?.record?.['작업구역ID'] || ''}`} siteId={siteId} image={blueprint} zones={zoneView.zones} selected={zoneView.selected} siteName={site} weather={weather} reassessment={reassessment} />
-    <section className="panel"><div className="step-title"><span>04</span><h3>기존 단일 작업 평가 · 용접·용단</h3><small aria-live="polite">{loading ? '질문 확인 중…' : `${progress.answered} / ${progress.total} 응답 (하위 입력 포함) · 미응답 ${progress.missing} · 확인 필요 ${progress.unknown}`}</small></div>
-    <details className="guide"><summary>거리 입력과 용접방화포 질문 안내</summary><p>현재 거리 점수는 11m 미만/이상으로 구분합니다. 화재감시자의 거리 관련 조건은 정확히 11m를 포함하는 ‘11m 이내’입니다. 거리만으로 배치 의무 전체를 판정하지 않습니다.</p><p>불티 비산방지조치 실시 여부와 용접방화포 사용 시 성능인증 여부를 각각 확인합니다. 다른 방법을 쓴다면 방화포 미사용으로 응답하되 실제 비산방지조치 상태도 확인하세요.</p></details>
-    <AssessmentQuestionGroups schema={schema} answers={answers} extras={extras} materials={materials} onMaterialsChange={value=>{invalidate();setMaterials(value);}} onExtraChange={(id,value)=>{invalidate();setExtras(a=>({...a,[id]:value}));}} loading={loading} onChange={(id,value)=>{invalidate();if(id==='Q001'&&value!=='있음')setMaterials(emptyMaterials());setAnswers(a=>({...a,[id]:value}));}} />
-    {!schema && !loading && <button type="button" onClick={() => setRetry(n => n + 1)}>질문 다시 불러오기</button>}</section>
-    <div className="actions"><p className="muted">선택하지 않은 항목은 미입력으로 남습니다.</p><button className="primary" disabled={loading || !schema || !blueprintReady || busy}>평가하기 <span>→</span></button></div>
-    </fieldset></form>
-    {error && <p className="error" role="alert">{error}</p>}{notice && <p className="success" role="status">{notice}</p>}
-    {current && <><Assessment record={current} /><div className="actions"><p className="muted">완료된 평가는 자동 저장됩니다. 결과 대시보드에서 이전 평가와의 변화를 확인하세요.</p><button onClick={save} disabled={busy || saved} className="primary">{saved ? '자동 저장됨' : busy ? '처리 중…' : '이 평가 저장'}</button></div></>}
+      onChange={setBlueprint} onZoneChange={setZoneView} />
+    <ZoneAssessment key={`${siteId}/${reassessment?.record?.['작업구역ID'] || ''}`} siteId={siteId} image={blueprint} zones={zoneView.zones} selected={zoneView.selected} siteName={site} weather={weather} reassessment={reassessment} onEvaluated={onZoneSaved} />
   </>;
 }
 
@@ -164,29 +177,39 @@ function History({ revision, onSelect, onReassess }) {
     {comparison && <div className="comparison"><Comparison comparison={comparison} />{['평가요약', '변경항목', '추가응답변경', '화재감시자검토'].map(k => <details key={k}><summary>{k} 상세</summary><Table rows={comparison[k]} /></details>)}</div>}</section></>;
 }
 
-function Dashboard({ current, selected, revision }) {
+function Dashboard({ current, zoneCurrent, selected, revision }) {
   const [site, setSite] = useState('');
   const [stats, setStats] = useState(null);
   const [error, setError] = useState('');
-  const [group, setGroup] = useState('');
   const [view, setView] = useState('current');
   const [retry, setRetry] = useState(0);
   const [records, setRecords] = useState([]);
+  const [zoneRecords, setZoneRecords] = useState([]);
   const [detail, setDetail] = useState(null);
   const [detailError, setDetailError] = useState('');
   const [listError, setListError] = useState('');
+  const displayRecord = view === 'current' ? (zoneCurrent || current) : detail;
+  useEffect(() => { if (zoneCurrent) setView('current'); }, [zoneCurrent]);
   useEffect(() => { if (selected) setView(selected['평가ID']); }, [selected]);
   useEffect(() => {
     const controller = new AbortController(); setListError('');
-    api('/evaluations', undefined, controller.signal).then(rows => {
+    Promise.all([
+      api('/evaluations', undefined, controller.signal),
+      api('/zone-assessments', undefined, controller.signal),
+    ]).then(([rows, zoneResult]) => {
+      const zones = zoneResult['\uD3C9\uAC00\uC774\uB825'] || [];
       setRecords(rows);
-      setView(value => value === 'current' && !current ? (rows[0]?.['평가ID'] || '') : value);
+      setZoneRecords(zones);
+      setView(value => value === 'current' && !current && !zoneCurrent
+        ? (rows[0]?.['\uD3C9\uAC00ID'] || (zones[0]?.['\uD3C9\uAC00ID'] ? `zone:${zones[0]['\uD3C9\uAC00ID']}` : ''))
+        : value);
     }).catch(e => { if (e.name !== 'AbortError') setListError(e.message); });
     return () => controller.abort();
-  }, [revision, retry, current]);
+  }, [revision, retry, current, zoneCurrent]);
   useEffect(() => {
     const controller = new AbortController(); setDetail(null); setDetailError('');
-    if (view && view !== 'current') api(`/evaluations/${view}`, undefined, controller.signal).then(setDetail).catch(e => { if (e.name !== 'AbortError') setDetailError(e.message); });
+    if (view?.startsWith('zone:')) api(`/zone-assessments/${encodeURIComponent(view.slice(5))}`, undefined, controller.signal).then(result => setDetail(result['\uD3C9\uAC00'])).catch(e => { if (e.name !== 'AbortError') setDetailError(e.message); });
+    else if (view && view !== 'current') api(`/evaluations/${view}`, undefined, controller.signal).then(setDetail).catch(e => { if (e.name !== 'AbortError') setDetailError(e.message); });
     return () => controller.abort();
   }, [view, retry]);
   useEffect(() => {
@@ -194,17 +217,15 @@ function Dashboard({ current, selected, revision }) {
     api(`/dashboard?site=${encodeURIComponent(site)}`, undefined, controller.signal).then(setStats).catch(e => { if (e.name !== 'AbortError') setError(e.message); });
     return () => controller.abort();
   }, [site, revision, retry]);
-  const groups = [...new Set((stats?.trends || []).filter(t => t.group[0] && t.group[1]).map(t => JSON.stringify(t.group)))];
-  const activeGroup = groups.includes(group) ? group : groups[0];
-  const trend = (stats?.trends || []).filter(t => JSON.stringify(t.group) === activeGroup).sort((a, b) => new Date(a.date) - new Date(b.date) || a.id.localeCompare(b.id));
+  const siteChoices = [...new Set([...(stats?.sites || []), ...zoneRecords.map(record => record['현장명']).filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'ko'));
   return <><div className="section-heading"><div><p className="eyebrow">RISK OVERVIEW</p><h2>결과 대시보드</h2></div><button onClick={() => setRetry(n => n + 1)}>새로고침</button></div>
-    <label className="field view-select">상세 결과 기준<select value={view} onChange={e => { setDetail(null); setView(e.target.value); }}>{current && <option value="current">현재 평가</option>}{!current && !records.length && <option value="">저장된 평가 없음</option>}{records.map(r => <option key={r['평가ID']} value={r['평가ID']}>{r['현장명']} / {r['작업명']} / {date(r['평가일시'])}</option>)}</select></label>
+    <label className="field view-select">{ '\uC0C1\uC138 \uACB0\uACFC \uAE30\uC900' }<select value={view} onChange={e => { setDetail(null); setView(e.target.value); }}>{(zoneCurrent || current) && <option value="current">{ '\uD604\uC7AC \uAD6C\uC5ED \uD3C9\uAC00' }</option>}{!zoneCurrent && !current && !records.length && !zoneRecords.length && <option value="">{ '\uC800\uC7A5\uB41C \uD3C9\uAC00 \uC5C6\uC74C' }</option>}{records.map(r => <option key={r['\uD3C9\uAC00ID']} value={r['\uD3C9\uAC00ID']}>{r['\uD604\uC7A5\uBA85']} / {r['\uC791\uC5C5\uBA85']} / {date(r['\uD3C9\uAC00\uC77C\uC2DC'])}</option>)}{zoneRecords.map(r => <option key={`zone:${r['\uD3C9\uAC00ID']}`} value={`zone:${r['\uD3C9\uAC00ID']}`}>{r['\uD604\uC7A5\uBA85']} / {r['\uC791\uC5C5\uAD6C\uC5ED\uBA85']} / {r['\uC791\uC5C5\uBA85']} / {date(r['\uD3C9\uAC00\uC77C\uC2DC'])}</option>)}</select></label>
     {listError && <p className="error" role="alert">평가 목록 조회 실패: {listError}</p>}
-    {detailError ? <p className="error" role="alert">{detailError}</p> : view && view !== 'current' && !detail ? <p role="status">평가 불러오는 중…</p> : <ZoneDashboard key={view === 'current' ? current?.['평가ID'] || 'current' : view} record={view === 'current' ? current : detail} revision={retry + revision} fallback={<><Assessment record={view === 'current' ? current : detail} /><PreviousComparison key={view === 'current' ? current?.['평가ID'] : view} record={view === 'current' ? current : detail} revision={retry + revision} /></>} />}
-    <section className="panel"><div className="section-heading"><h3>저장된 평가 현황</h3><label className="field">현장 필터<select value={site} onChange={e => { setSite(e.target.value); setGroup(''); }}><option value="">전체 현장</option>{(stats?.sites || (site ? [site] : [])).map(s => <option key={s}>{s}</option>)}</select></label></div>
-    {error ? <p className="error" role="alert">{error}</p> : !stats ? <p role="status">불러오는 중…</p> : <><Metrics items={[["저장 평가", stats.count], ['현장', stats.site_count], ['판정 보류', stats.held_count]]} /><p className="muted">같은 현장의 반복 평가도 각각 한 건입니다. 저장 당시의 잠정등급이며 사고 건수나 확률이 아닙니다.</p>
+    {detailError ? <p className="error" role="alert">{detailError}</p> : view && view !== 'current' && !detail ? <p role="status">평가 불러오는 중…</p> : <ZoneDashboard key={view === 'current' ? current?.['평가ID'] || 'current' : view} record={view === 'current' ? displayRecord : detail} revision={retry + revision} fallback={<><Assessment record={view === 'current' ? displayRecord : detail} /><PreviousComparison key={view === 'current' ? current?.['평가ID'] : view} record={view === 'current' ? displayRecord : detail} revision={retry + revision} /></>} />}
+    <section className="panel"><div className="section-heading"><div><h3>저장된 평가 현황</h3><p className="muted">이 화면에서는 저장된 평가결과와 위험지수의 변화를 확인할 수 있습니다. 현장과 작업구역을 선택하여 이전 평가와 비교해 보세요.</p></div><label className="field">현장 필터<select value={site} onChange={e => { setSite(e.target.value); }}><option value="">전체 현장</option>{siteChoices.map(s => <option key={s}>{s}</option>)}</select></label></div>
+    {error ? <p className="error" role="alert">{error}</p> : !stats ? <p role="status">불러오는 중…</p> : <><Metrics items={[["저장 평가", stats.count, '기존 단일 작업 평가기록 수'], ['현장', stats.site_count, '기존 단일 작업 평가기록이 존재하는 고유 현장 수'], ['판정 보류', stats.held_count, '기존 단일 작업 평가 중 최종판정이 보류로 시작한 기록 수']]} /><p className="muted">같은 현장의 반복 평가도 각각 한 건입니다. 저장 당시의 잠정등급이며 사고 건수나 확률이 아닙니다.</p>
     {Object.entries(stats.grades).map(([grade, count]) => <div className="bar-row" key={grade}><div><span>{grade}</span><b>{count}건</b></div><div className="bar-track teal"><div style={{ width: `${count / Math.max(stats.count, 1) * 100}%`, background: colors[grade] || colors['확인필요'] }} /></div></div>)}{!stats.count && <p className="empty">평가를 저장하면 현황이 표시됩니다.</p>}
-    <h3>현장별 점수 기록</h3>{!site ? <p className="muted">한 현장을 선택하면 동일한 계산 기준의 점수 기록을 볼 수 있습니다.</p> : groups.length ? <><label className="field">계산 기준<select value={activeGroup} onChange={e => setGroup(e.target.value)}>{groups.map((g, i) => <option key={g} value={g}>기준 그룹 {i + 1} · 분모 {JSON.parse(g)[2]}</option>)}</select></label><p className="muted">같은 데이터·엔진·분모를 사용한 {trend.length}건입니다. 점수 하락을 안전성 개선으로 단정하지 않습니다.</p><div className="trend" role="img" aria-label="동일 계산 기준 평가의 위험지수 추이"><svg viewBox="0 0 600 180">{[0, 50, 100].map(n => <g key={n}><line x1="35" x2="580" y1={155 - n * 1.3} y2={155 - n * 1.3} stroke="#dbe2e5" /><text x="0" y={160 - n * 1.3}>{n}</text></g>)}<polyline fill="none" stroke="#2b7880" strokeWidth="2" points={trend.map((t, i) => t.score == null ? '' : `${40 + i * 530 / Math.max(trend.length - 1, 1)},${155 - t.score * 1.3}`).join(' ')} />{trend.filter(t => t.score != null).map(t => <circle key={t.id} cx={40 + trend.indexOf(t) * 530 / Math.max(trend.length - 1, 1)} cy={155 - t.score * 1.3} r="4" fill="#2b7880"><title>{date(t.date)} · {score(t.score)}</title></circle>)}</svg></div><Table rows={trend.map(t => ({ 평가일시: date(t.date), 위험지수: t.score, 평가ID: t.id }))} /></> : <p className="empty">계산 기준 정보가 있는 기록이 없습니다.</p>}</>}
+    <h3>화재위험지수 변화 추이</h3><p className="muted">선택한 현장 또는 작업구역의 평가 시점별 위험지수 변화를 보여줍니다.</p><RiskTrend site={site} zoneRecords={zoneRecords} legacyTrends={stats?.trends || []} /></>}
     </section></>;
 }
 
@@ -215,6 +236,7 @@ function App() {
   const [error, setError] = useState('');
   const [tab, setTab] = useState('new');
   const [current, setCurrent] = useState(null);
+  const [zoneCurrent, setZoneCurrent] = useState(null);
   const [selected, setSelected] = useState(null);
   const [zoneReassessment, setZoneReassessment] = useState(null);
   const [revision, setRevision] = useState(0);
@@ -228,8 +250,8 @@ function App() {
   return <div className="app"><aside className="sidebar"><div className="brand"><span className="brand-icon">F</span><div>FIRE RISK<small>건설현장 화재 위험도</small></div></div><p className="nav-label">WORKSPACE</p><nav aria-label="주 메뉴">{[['new', '01', '새 평가'], ['dashboard', '02', '결과 대시보드'], ['history', '03', '저장 기록·비교']].map(([id, n, title]) => <button key={id} aria-current={tab === id ? 'page' : undefined} className={tab === id ? 'active' : ''} onClick={() => { if (id === 'new') setZoneReassessment(null); setTab(id); }}><span>{n}</span>{title}</button>)}</nav><div className="sidebar-bottom"><span className="status-dot" /> 작업 시작 전 평가<small>용접·용단<br />규칙 기반 시험 평가</small></div></aside>
     <div className="workspace"><header><span>현장 안전 관리 <b>/ 화재 위험도 평가</b></span><span className="header-slogan">작업 전 <strong>화재 위험</strong>, 정해진 <strong>기준</strong>으로 평가하세요</span><span className="header-tag">PRE-WORK</span></header><main>
     {!connected ? <form className="panel login" onSubmit={connect}><p className="eyebrow">WORKSPACE ACCESS</p><h2>{checking ? '연결 확인 중…' : '평가 서비스 접속'}</h2><label className="field">접속 키<input type="password" autoComplete="off" value={key} onChange={e => setKey(e.target.value)} placeholder="관리자에게 받은 접속 키" /></label><p className="muted">접속 키는 이 탭이 열려 있는 동안만 유지됩니다.</p>{error && <p role="alert" className="error">{error}</p>}<button className="primary" disabled={checking}>연결하기</button></form> : <>
-      <div hidden={tab !== 'new'}><NewEvaluation key={zoneReassessment?.record?.['평가ID'] || 'new-evaluation'} current={current} setCurrent={setCurrent} reassessment={zoneReassessment} onSaved={() => setRevision(n => n + 1)} onCompleted={() => { setZoneReassessment(null); setSelected(null); setTab('dashboard'); }} /></div>
-      {tab === 'dashboard' && <Dashboard current={current} selected={selected} revision={revision} />}
+      <div hidden={tab !== 'new'}><NewEvaluation key={zoneReassessment?.record?.['평가ID'] || 'new-evaluation'} reassessment={zoneReassessment} onZoneSaved={record => { setZoneCurrent(record); setSelected(null); setRevision(n => n + 1); }} /></div>
+      {tab === 'dashboard' && <Dashboard current={current} zoneCurrent={zoneCurrent} selected={selected} revision={revision} />}
       {tab === 'history' && <History revision={revision} onSelect={r => { setSelected(r); setTab('dashboard'); }} onReassess={(record, inputs) => { setZoneReassessment({ record, inputs }); setTab('new'); }} />}
     </>}
     <footer>화재 위험도 평가 · 작업 시작 전 확인 기록</footer></main></div></div>;
