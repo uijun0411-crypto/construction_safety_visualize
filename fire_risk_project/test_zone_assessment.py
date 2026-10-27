@@ -23,9 +23,8 @@ class ZoneAssessmentTests(unittest.TestCase):
     def setUp(self):
         self.directory = TemporaryDirectory()
         self.db = Path(self.directory.name) / "records.sqlite3"
-        self.client = TestClient(create_app(self.db, access_key="test-key"))
+        self.client = TestClient(create_app(self.db))
         self.client.__enter__()
-        self.client.headers["X-Access-Key"] = "test-key"
         self.site = str(uuid4())
         image = self.client.post(f"/api/sites/{self.site}/blueprints", json={
             "filename": "site.png", "media_type": "image/png", "data_base64": PNG}).json()["조감도"]
@@ -114,8 +113,8 @@ class ZoneAssessmentTests(unittest.TestCase):
         update = self.client.put(url + "/assessment", json=changed)
         self.assertEqual(update.json()["입력상태"], "재계산 필요")
         self.assertEqual(self.client.get(url + "/assessment").json()["최근평가"]["평가ID"], original["평가ID"])
-        with TestClient(create_app(self.db, access_key="test-key")) as restarted:
-            record = restarted.get(url + "/assessment", headers={"X-Access-Key": "test-key"}).json()
+        with TestClient(create_app(self.db)) as restarted:
+            record = restarted.get(url + "/assessment").json()
         self.assertEqual(record["입력상태"], "재계산 필요")
         self.assertEqual(record["초안"]["answers"]["Q002"], 7)
         newer = self.client.post(url + "/evaluate", json=changed).json()["평가"]
@@ -153,7 +152,7 @@ class ZoneAssessmentTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIsNone(response.json()["평가"]["화재위험지수"])
         self.assertEqual(response.json()["평가"]["위험수준"], "확인필요")
-        self.assertEqual(self.client.get(self.url(0) + "/assessment", headers={"X-Access-Key": "wrong"}).status_code, 401)
+        self.assertEqual(self.client.get(self.url(0) + "/assessment").status_code, 200)
 
 
 if __name__ == "__main__":

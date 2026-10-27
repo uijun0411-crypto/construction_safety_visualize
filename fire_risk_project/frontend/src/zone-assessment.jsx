@@ -18,6 +18,7 @@ export default function ZoneAssessment({ siteId, image, zones, selected, siteNam
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const schemaTask = useRef('');
   const draftsRef = useRef({});
   const queues = useRef({});
   const loaded = useRef(new Set());
@@ -63,13 +64,16 @@ export default function ZoneAssessment({ siteId, image, zones, selected, siteNam
   }, [siteId, imageId, zones, reassessment]);
 
   useEffect(() => {
-    setSchema(null);
+    if (schemaTask.current !== draft.task_id) {
+      schemaTask.current = draft.task_id;
+      setSchema(null);
+    }
     if (!draft.task_id || !key) return;
     const controller = new AbortController();
     setLoading(true);
     api('/zone-questions', { task_id: draft.task_id, answers: draft.answers || {}, watcher_answers: draft.watcher_answers || {} }, controller.signal)
       .then(data => { setSchema(data); setError(''); })
-      .catch(e => { if (e.name !== 'AbortError') { setSchema(null); setError(e.message); } })
+      .catch(e => { if (e.name !== 'AbortError') setError(e.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [key, draft.task_id, draft.answers, draft.watcher_answers]);

@@ -93,7 +93,7 @@ class WeatherTests(unittest.TestCase):
 
     def test_api_snapshot_persistence_parity_and_legacy(self):
         with TemporaryDirectory() as temporary, patch.dict(os.environ, {'KMA_API_KEY': 'test-secret', 'KMA_SERVICE_KEY': ''}):
-            with TestClient(create_app(Path(temporary)/'test.sqlite3', access_key='')) as client:
+            with TestClient(create_app(Path(temporary)/'test.sqlite3')) as client:
                 answers = {'Q001':'없음','Q003':'실시','Q004':'배치','Q018':'용접방화포 미사용','Q019':'없음','Q020':'없음','Q025':'적정'}
                 body = {'site_name':'기상 테스트 현장','answers':answers,'watcher_ui_version':'integrated-v1','watcher_answers':{'W001':'아니오'}}
                 data = {'region':LOCATION,'observed':weather.parse_observation(observation_items(),LOCATION,weather.observation_base_time(NOW),NOW),

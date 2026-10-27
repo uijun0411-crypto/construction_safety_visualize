@@ -2,7 +2,6 @@
 from contextlib import asynccontextmanager
 import base64
 import binascii
-import hmac
 import json
 import logging
 import os
@@ -13,7 +12,7 @@ from uuid import UUID, uuid4
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr, StrictBool, model_validator
@@ -167,9 +166,8 @@ class Comparison(BaseModel):
     after_id: str = Field(min_length=1, max_length=100)
 
 
-def create_app(storage_path=None, access_key=None, origins=None):
+def create_app(storage_path=None, origins=None):
     storage = evaluation_storage.configured_storage(storage_path)
-    key = access_key if access_key is not None else os.environ.get("APP_ACCESS_KEY", "")
     allowed_origins = origins if origins is not None else [
         s.strip().rstrip("/") for s in os.environ.get(
             "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
@@ -178,21 +176,14 @@ def create_app(storage_path=None, access_key=None, origins=None):
 
     @asynccontextmanager
     async def lifespan(app):
-        if (os.environ.get("RENDER") or os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV")) and not key:
-            raise RuntimeError("배포 환경에서는 APP_ACCESS_KEY 설정이 필요합니다.")
         engine.load_databases(ROOT / "data")
         evaluation_storage.initialize(storage)
         yield
 
     app = FastAPI(title="화재 위험도 평가 API", version="1.0.0", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=allowed_origins,
-                       allow_methods=["GET", "POST", "PUT", "DELETE"], allow_headers=["Content-Type", "X-Access-Key"])
+                       allow_methods=["GET", "POST", "PUT", "DELETE"], allow_headers=["Content-Type"])
 
-    def authorize(x_access_key: Annotated[str | None, Header()] = None):
-        if key and not hmac.compare_digest((x_access_key or "").encode(), key.encode()):
-            raise HTTPException(401, "접속 키를 확인하세요.")
-
-    secured = [Depends(authorize)]
 
     @app.exception_handler(ValueError)
     async def invalid(request: Request, error: ValueError):
@@ -214,22 +205,18 @@ def create_app(storage_path=None, access_key=None, origins=None):
     def health():
         return {"status": "ok"}
 
-    @app.get("/api/session", dependencies=secured)
-    def session():
-        return {"authenticated": True}
-
-    @app.get("/api/materials", dependencies=secured)
+    @app.get("/api/materials")
     def material_catalogue():
         try:
             return materials.catalogue()
         except materials.MaterialDataError as error:
             raise HTTPException(503, str(error)) from error
 
-    @app.get("/api/weather/regions", dependencies=secured)
+    @app.get("/api/weather/regions")
     def weather_regions():
         return weather.CATALOGUE
 
-    @app.get("/api/weather", dependencies=secured)
+    @app.get("/api/weather")
     def weather_lookup(region_id: str = Query(max_length=20)):
         try:
             return weather.fetch(region_id)
@@ -249,18 +236,18 @@ def create_app(storage_path=None, access_key=None, origins=None):
             result["이미지Base64"] = base64.b64encode(image["image_data"]).decode("ascii")
         return result
 
-    @app.get("/api/sites/{site_id}/blueprint", dependencies=secured)
+    @app.get("/api/sites/{site_id}/blueprint")
     def get_site_blueprint(site_id: UUID):
         return {"조감도": blueprint_result(evaluation_storage.current_site_blueprint(storage, str(site_id)), True)}
 
-    @app.get("/api/sites/{site_id}/blueprints/{image_id}", dependencies=secured)
+    @app.get("/api/sites/{site_id}/blueprints/{image_id}")
     def get_site_blueprint_version(site_id: UUID, image_id: UUID):
         image = evaluation_storage.site_blueprint(storage, str(site_id), str(image_id))
         if image is None:
             raise HTTPException(404, "현장 조감도를 찾을 수 없습니다.")
         return {"조감도": blueprint_result(image, True)}
 
-    @app.post("/api/sites/{site_id}/blueprints", dependencies=secured)
+    @app.post("/api/sites/{site_id}/blueprints")
     def upload_site_blueprint(site_id: UUID, body: BlueprintUpload):
         try:
             image_data = base64.b64decode(body.data_base64, validate=True)
@@ -283,7 +270,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
         )
         return {"조감도": blueprint_result(image)}
 
-    @app.delete("/api/sites/{site_id}/blueprint", dependencies=secured)
+    @app.delete("/api/sites/{site_id}/blueprint")
     def delete_site_blueprint(site_id: UUID):
         return {"삭제됨": evaluation_storage.clear_current_site_blueprint(storage, str(site_id))}
 
@@ -297,13 +284,13 @@ def create_app(storage_path=None, access_key=None, origins=None):
         if image is None:
             raise HTTPException(404, "해당 현장의 조감도 버전을 찾을 수 없습니다.")
 
-    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones", dependencies=secured)
+    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones")
     def get_work_zones(site_id: UUID, image_id: UUID):
         require_site_image(site_id, image_id)
         zones = evaluation_storage.list_site_work_zones(storage, str(site_id), str(image_id))
         return {"작업구역": [work_zone_result(zone) for zone in zones]}
 
-    @app.post("/api/sites/{site_id}/blueprints/{image_id}/zones", dependencies=secured)
+    @app.post("/api/sites/{site_id}/blueprints/{image_id}/zones")
     def add_work_zone(site_id: UUID, image_id: UUID, body: WorkZoneInput):
         require_site_image(site_id, image_id)
         existing = evaluation_storage.list_site_work_zones(storage, str(site_id), str(image_id))
@@ -316,7 +303,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
         )
         return {"작업구역": work_zone_result(zone)}
 
-    @app.put("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}", dependencies=secured)
+    @app.put("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}")
     def edit_work_zone(site_id: UUID, image_id: UUID, zone_id: UUID, body: WorkZoneInput):
         require_site_image(site_id, image_id)
         existing = evaluation_storage.list_site_work_zones(storage, str(site_id), str(image_id))
@@ -333,7 +320,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
                               "이름": body.name, "영역유형": "사각형", "좌표": body.coordinates.model_dump(),
                               "수정시각": timestamp}}
 
-    @app.delete("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}", dependencies=secured)
+    @app.delete("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}")
     def remove_work_zone(site_id: UUID, image_id: UUID, zone_id: UUID):
         deleted = evaluation_storage.delete_site_work_zone(storage, str(zone_id), str(site_id), str(image_id))
         return {"삭제됨": deleted}
@@ -367,17 +354,17 @@ def create_app(storage_path=None, access_key=None, origins=None):
         value = body.model_dump(mode="json", exclude={"site_name", "weather_region_id", "weather_token", "weather_exposure"})
         return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
-    @app.get("/api/zone-tasks", dependencies=secured)
+    @app.get("/api/zone-tasks")
     def zone_tasks():
         return {"tasks": [{"task_id": row["작업ID"], "process": row["대공정"], "subprocess": row["세부공정"], "name": row["세부작업"]}
                           for _, row in engine.tasks.iterrows()
                           if row["화재위험여부"] == "1" and not engine.get_questions_for_task(row["작업ID"]).empty]}
 
-    @app.post("/api/zone-questions", dependencies=secured)
+    @app.post("/api/zone-questions")
     def zone_questions(body: ZoneQuestionsInput):
         return zone_schema(body)
 
-    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessment", dependencies=secured)
+    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessment")
     def get_zone_assessment(site_id: UUID, image_id: UUID, zone_id: UUID):
         require_zone(site_id, image_id, zone_id)
         draft = evaluation_storage.load_zone_draft(storage, str(site_id), str(image_id), str(zone_id))
@@ -385,7 +372,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
         status = "미작성" if draft is None and latest is None else "완료" if latest and (draft is None or draft.get("입력SHA256") == latest.get("입력SHA256")) else "재계산 필요" if latest else "작성 중"
         return {"초안": draft, "최근평가": latest, "입력상태": status}
 
-    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessments", dependencies=secured)
+    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessments")
     def zone_assessment_versions(site_id: UUID, image_id: UUID, zone_id: UUID):
         require_zone(site_id, image_id, zone_id)
         records = evaluation_storage.list_zone_assessments(storage, str(site_id), str(image_id), str(zone_id))
@@ -441,7 +428,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
             previous = max(candidates, key=evaluation_history.order)
         return previous
 
-    @app.get("/api/zone-assessments", dependencies=secured)
+    @app.get("/api/zone-assessments")
     def zone_assessment_history(site_id: UUID | None = None, site_keyword: str = Query(default="", max_length=200)):
         records = evaluation_storage.list_all_zone_assessments(storage, str(site_id) if site_id else None)
         keyword = " ".join(site_keyword.casefold().split())
@@ -461,7 +448,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
                          "이전구역평가ID": record.get("이전구역평가ID")})
         return {"평가이력": rows}
 
-    @app.get("/api/zone-assessments/{evaluation_id}/previous", dependencies=secured)
+    @app.get("/api/zone-assessments/{evaluation_id}/previous")
     def zone_assessment_previous(evaluation_id: UUID):
         record = evaluation_storage.zone_assessment_by_id(storage, str(evaluation_id))
         if record is None:
@@ -470,14 +457,14 @@ def create_app(storage_path=None, access_key=None, origins=None):
         return {"이전평가ID": previous["평가ID"] if previous else None,
                 "comparison": zone_comparison(previous, record) if previous else None}
 
-    @app.get("/api/zone-assessments/{evaluation_id}", dependencies=secured)
+    @app.get("/api/zone-assessments/{evaluation_id}")
     def zone_assessment_history_detail(evaluation_id: UUID):
         record = evaluation_storage.zone_assessment_by_id(storage, str(evaluation_id))
         if record is None:
             raise HTTPException(404, "구역 평가기록을 찾을 수 없습니다.")
         return {"평가": record, "재평가입력": zone_reassessment_input(record)}
 
-    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessments/{evaluation_id}", dependencies=secured)
+    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessments/{evaluation_id}")
     def zone_assessment_version(site_id: UUID, image_id: UUID, zone_id: UUID, evaluation_id: UUID):
         require_zone(site_id, image_id, zone_id)
         record = next((item for item in evaluation_storage.list_zone_assessments(storage, str(site_id), str(image_id), str(zone_id))
@@ -486,7 +473,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
             raise HTTPException(404, "작업구역 평가기록을 찾을 수 없습니다.")
         return {"평가": record, "재평가입력": zone_reassessment_input(record)}
 
-    @app.put("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessment", dependencies=secured)
+    @app.put("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessment")
     def save_zone_assessment_draft(site_id: UUID, image_id: UUID, zone_id: UUID, body: ZoneAssessmentInput):
         require_zone(site_id, image_id, zone_id)
         zone_schema(body)
@@ -497,7 +484,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
         latest = evaluation_storage.latest_zone_assessment(storage, str(site_id), str(image_id), str(zone_id))
         return {"초안": draft, "입력상태": "완료" if latest and latest.get("입력SHA256") == draft["입력SHA256"] else "재계산 필요" if latest else "작성 중"}
 
-    @app.post("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/evaluate", dependencies=secured)
+    @app.post("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/evaluate")
     def evaluate_zone(site_id: UUID, image_id: UUID, zone_id: UUID, body: ZoneAssessmentInput):
         zone = require_zone(site_id, image_id, zone_id)
         task = zone_task(body.task_id)
@@ -547,13 +534,13 @@ def create_app(storage_path=None, access_key=None, origins=None):
         evaluation_storage.save_zone_assessment(storage, str(site_id), str(image_id), str(zone_id), record)
         return {"평가": record, "입력상태": "완료"}
 
-    @app.post("/api/questions", dependencies=secured)
+    @app.post("/api/questions")
     def questions(body: QuestionInput):
         return {"questions": frame_rows(engine.get_prework_questions(body.task_id, body.answers)),
                 "watcher_context": watcher_input.context(body.task_id, body.answers, body.watcher_answers),
                 "watcher_questions": frame_rows(engine.watcher_questions[~engine.watcher_questions['추가질문ID'].isin(['W002', 'W003'])])}
 
-    @app.post("/api/evaluate", dependencies=secured)
+    @app.post("/api/evaluate")
     def evaluate(body: EvaluationInput):
         fingerprint = hashlib.sha256(json.dumps(body.model_dump(mode="json", exclude={"request_id"}), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         identifier = str(body.request_id) if body.request_id else None
@@ -607,7 +594,7 @@ def create_app(storage_path=None, access_key=None, origins=None):
         engine.save_evaluation(record, storage)
         return record
 
-    @app.post("/api/evaluations/{evaluation_id}/save", dependencies=secured)
+    @app.post("/api/evaluations/{evaluation_id}/save")
     def save(evaluation_id: str):
         # 요청 본문의 점수를 신뢰하지 않고 서버가 계산한 초안만 저장합니다.
         if evaluation_storage.saved_exists(storage, evaluation_id):
@@ -618,23 +605,23 @@ def create_app(storage_path=None, access_key=None, origins=None):
         result = engine.save_evaluation(draft, storage)
         return {k: result[k] for k in ("평가ID", "저장상태")}
 
-    @app.get("/api/evaluations", dependencies=secured)
+    @app.get("/api/evaluations")
     def history(site_keyword: str = Query(default="", max_length=200)):
         return evaluation_history.history(storage, site_keyword)
 
-    @app.get("/api/evaluations/{evaluation_id}/previous", dependencies=secured)
+    @app.get("/api/evaluations/{evaluation_id}/previous")
     def previous(evaluation_id: str):
         return {"comparison": evaluation_history.previous_comparison(engine.load_evaluation(evaluation_id, storage), storage)}
 
-    @app.get("/api/evaluations/{evaluation_id}", dependencies=secured)
+    @app.get("/api/evaluations/{evaluation_id}")
     def detail(evaluation_id: str):
         return engine.load_evaluation(evaluation_id, storage)
 
-    @app.post("/api/compare", dependencies=secured)
+    @app.post("/api/compare")
     def compare(body: Comparison):
         return evaluation_history.compare(engine.load_evaluation(body.before_id, storage), engine.load_evaluation(body.after_id, storage))
 
-    @app.get("/api/dashboard", dependencies=secured)
+    @app.get("/api/dashboard")
     def dashboard(site: str = Query(default="", max_length=200)):
         history = engine.search_evaluations(storage, task_id="H05")
         sites = sorted(history["현장명"].unique().tolist())

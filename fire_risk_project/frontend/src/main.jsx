@@ -3,7 +3,7 @@ import BlueprintUpload from './blueprint';
 import ZoneAssessment from './zone-assessment';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { api, setAccessKey } from './api';
+import { api } from './api';
 import './styles.css';
 import Assessment, { colors } from './assessment-result';
 import Comparison from './comparison';
@@ -230,30 +230,17 @@ function Dashboard({ current, zoneCurrent, selected, revision }) {
 }
 
 function App() {
-  const [connected, setConnected] = useState(false);
-  const [checking, setChecking] = useState(true);
-  const [key, setKey] = useState('');
-  const [error, setError] = useState('');
   const [tab, setTab] = useState('new');
   const [current, setCurrent] = useState(null);
   const [zoneCurrent, setZoneCurrent] = useState(null);
   const [selected, setSelected] = useState(null);
   const [zoneReassessment, setZoneReassessment] = useState(null);
   const [revision, setRevision] = useState(0);
-  useEffect(() => { let active = true; api('/session').then(() => { if (active) setConnected(true); }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setChecking(false); }); return () => { active = false; }; }, []);
-  async function connect(e) {
-    e.preventDefault(); setChecking(true); setError(''); setAccessKey(key);
-    try { await api('/session'); setConnected(true); setKey(''); }
-    catch (e) { setError(e.message); }
-    finally { setChecking(false); }
-  }
   return <div className="app"><aside className="sidebar"><div className="brand"><span className="brand-icon">F</span><div>FIRE RISK<small>건설현장 화재 위험도</small></div></div><p className="nav-label">WORKSPACE</p><nav aria-label="주 메뉴">{[['new', '01', '새 평가'], ['dashboard', '02', '결과 대시보드'], ['history', '03', '저장 기록·비교']].map(([id, n, title]) => <button key={id} aria-current={tab === id ? 'page' : undefined} className={tab === id ? 'active' : ''} onClick={() => { if (id === 'new') setZoneReassessment(null); setTab(id); }}><span>{n}</span>{title}</button>)}</nav><div className="sidebar-bottom"><span className="status-dot" /> 작업 시작 전 평가<small>용접·용단<br />규칙 기반 시험 평가</small></div></aside>
     <div className="workspace"><header><span>현장 안전 관리 <b>/ 화재 위험도 평가</b></span><span className="header-slogan">작업 전 <strong>화재 위험</strong>, 정해진 <strong>기준</strong>으로 평가하세요</span><span className="header-tag">PRE-WORK</span></header><main>
-    {!connected ? <form className="panel login" onSubmit={connect}><p className="eyebrow">WORKSPACE ACCESS</p><h2>{checking ? '연결 확인 중…' : '평가 서비스 접속'}</h2><label className="field">접속 키<input type="password" autoComplete="off" value={key} onChange={e => setKey(e.target.value)} placeholder="관리자에게 받은 접속 키" /></label><p className="muted">접속 키는 이 탭이 열려 있는 동안만 유지됩니다.</p>{error && <p role="alert" className="error">{error}</p>}<button className="primary" disabled={checking}>연결하기</button></form> : <>
       <div hidden={tab !== 'new'}><NewEvaluation key={zoneReassessment?.record?.['평가ID'] || 'new-evaluation'} reassessment={zoneReassessment} onZoneSaved={record => { setZoneCurrent(record); setSelected(null); setRevision(n => n + 1); }} /></div>
       {tab === 'dashboard' && <Dashboard current={current} zoneCurrent={zoneCurrent} selected={selected} revision={revision} />}
       {tab === 'history' && <History revision={revision} onSelect={r => { setSelected(r); setTab('dashboard'); }} onReassess={(record, inputs) => { setZoneReassessment({ record, inputs }); setTab('new'); }} />}
-    </>}
     <footer>화재 위험도 평가 · 작업 시작 전 확인 기록</footer></main></div></div>;
 }
 

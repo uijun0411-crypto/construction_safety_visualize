@@ -30,9 +30,8 @@ class ApiTests(unittest.TestCase):
     def setUp(self):
         self.directory = TemporaryDirectory()
         self.storage = Path(self.directory.name) / "records.sqlite3"
-        self.client = TestClient(create_app(self.storage, access_key="test-key"))
+        self.client = TestClient(create_app(self.storage))
         self.client.__enter__()
-        self.client.headers["X-Access-Key"] = "test-key"
         answers = {}
         for row in engine.get_questions_for_task("H05").to_dict("records"):
             answers[row["항목ID"]] = row["선택지·허용값"].split("/")[0].strip() if row["입력형식"] == "선택" else 5
@@ -58,8 +57,8 @@ class ApiTests(unittest.TestCase):
         saved = self.client.get(f"/api/evaluations/{identifier}").json()
         self.assertEqual(saved, record)
         self.assertEqual(self.client.post(f"/api/evaluations/{identifier}/save").json()["저장상태"], "이미 저장됨")
-        with TestClient(create_app(self.storage, access_key="test-key")) as restarted:
-            self.assertEqual(restarted.get(f"/api/evaluations/{identifier}", headers={"X-Access-Key": "test-key"}).json(), record)
+        with TestClient(create_app(self.storage)) as restarted:
+            self.assertEqual(restarted.get(f"/api/evaluations/{identifier}").json(), record)
         self.assertEqual(len(self.client.get("/api/evaluations?site_keyword=테스트").json()), 1)
         dashboard = self.client.get("/api/dashboard").json()
         self.assertEqual(dashboard["count"], 1)
@@ -93,8 +92,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual((first["현장ID"], first["버전"], first["원본너비"], first["원본높이"]), (site_id, 1, 1, 1))
         current = self.client.get(f"/api/sites/{site_id}/blueprint").json()["조감도"]
         self.assertEqual(current["이미지Base64"], upload["data_base64"])
-        with TestClient(create_app(self.storage, access_key="test-key")) as restarted:
-            restored = restarted.get(f"/api/sites/{site_id}/blueprint", headers={"X-Access-Key": "test-key"}).json()["조감도"]
+        with TestClient(create_app(self.storage)) as restarted:
+            restored = restarted.get(f"/api/sites/{site_id}/blueprint").json()["조감도"]
             self.assertEqual(restored["이미지ID"], first["이미지ID"])
 
         second = self.client.post(url, json={**upload, "filename": "replacement.png"}).json()["조감도"]
@@ -145,8 +144,8 @@ class ApiTests(unittest.TestCase):
         restored = self.client.get(zones_url).json()["작업구역"]
         self.assertEqual([zone["좌표"] for zone in restored], rectangles)
         self.assertEqual([zone["이름"] for zone in restored], ["A구역", "B구역", "C구역"])
-        with TestClient(create_app(self.storage, access_key="test-key")) as restarted:
-            after_restart = restarted.get(zones_url, headers={"X-Access-Key": "test-key"}).json()["작업구역"]
+        with TestClient(create_app(self.storage)) as restarted:
+            after_restart = restarted.get(zones_url).json()["작업구역"]
             self.assertEqual([zone["작업구역ID"] for zone in after_restart], ids)
             self.assertEqual([zone["좌표"] for zone in after_restart], rectangles)
 
@@ -258,12 +257,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(distance["이후_적용상태"], "조건제외")
         self.assertIsNone(distance["이후_가중점수"])
 
-    def test_authorization_cors_and_missing_record(self):
-        del self.client.headers["X-Access-Key"]
-        self.assertEqual(self.client.get("/api/evaluations").status_code, 401)
+    def test_public_api_cors_and_missing_record(self):
+        self.assertEqual(self.client.get("/api/evaluations").status_code, 200)
         self.assertEqual(self.client.get("/health").status_code, 200)
-        self.client.headers["X-Access-Key"] = "test-key"
-        headers = {"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type,x-access-key"}
+        headers = {"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"}
         self.assertEqual(self.client.options("/api/evaluate", headers=headers).status_code, 200)
         self.assertEqual(self.client.options("/api/evaluate", headers={**headers, "Origin": "https://untrusted.example"}).status_code, 400)
         self.assertEqual(self.client.get("/api/evaluations/missing").status_code, 404)
@@ -435,8 +432,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(lookup['M013']['선택분류'], '분류 확인 필요')
         self.assertEqual(lookup['M008']['인화점_원문'], '≤4℃')
         self.assertEqual(lookup['M006']['인화점_기준값℃'], '')
-        del self.client.headers['X-Access-Key']
-        self.assertEqual(self.client.get('/api/materials').status_code, 401)
+        self.assertEqual(self.client.get('/api/materials').status_code, 200)
 
     def test_material_multiple_snapshot_and_score_parity(self):
         baseline = self.evaluate({**self.body, 'watcher_ui_version': 'integrated-v1'})
