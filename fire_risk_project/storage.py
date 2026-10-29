@@ -322,13 +322,16 @@ def update_site_work_zone(storage, *, zone_id, site_id, image_id, name, coordina
 
 
 def delete_site_work_zone(storage, zone_id, site_id, image_id):
-    query = "DELETE FROM site_work_zones WHERE zone_id = %s AND site_id = %s AND image_id = %s" if is_postgres_storage(storage) else "DELETE FROM site_work_zones WHERE zone_id = ? AND site_id = ? AND image_id = ?"
     if is_postgres_storage(storage):
         with _connect_postgres(storage) as conn:
-            result = conn.execute(query, (zone_id, site_id, image_id))
+            result = conn.execute("DELETE FROM site_work_zones WHERE zone_id = %s AND site_id = %s AND image_id = %s", (zone_id, site_id, image_id))
+            if result.rowcount:
+                conn.execute("DELETE FROM zone_assessment_drafts WHERE zone_id = %s AND site_id = %s AND image_id = %s", (zone_id, site_id, image_id))
             return result.rowcount > 0
     with closing(sqlite3.connect(Path(storage).expanduser().resolve())) as conn, conn:
-        result = conn.execute(query, (zone_id, site_id, image_id))
+        result = conn.execute("DELETE FROM site_work_zones WHERE zone_id = ? AND site_id = ? AND image_id = ?", (zone_id, site_id, image_id))
+        if result.rowcount:
+            conn.execute("DELETE FROM zone_assessment_drafts WHERE zone_id = ? AND site_id = ? AND image_id = ?", (zone_id, site_id, image_id))
         return result.rowcount > 0
 
 

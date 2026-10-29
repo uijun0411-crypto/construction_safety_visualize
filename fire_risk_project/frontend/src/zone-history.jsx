@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from './api';
 import Assessment, { colors } from './assessment-result';
 import { ZonePreviousComparison } from './zone-dashboard';
+import InterferenceCard from './interference-card';
 
 const score = value => value == null ? '미산정' : Number(value).toFixed(2);
 
@@ -38,6 +39,7 @@ export default function ZoneHistoryDetail({ record, onReassess }) {
       <p className="muted">평가 당시 조감도 버전 {record['현장조감도']?.['버전']} · {blueprint['파일명']}</p>
     </div>}
     <Assessment record={record} />
+    <InterferenceCard record={record} />
     <section className="panel previous-comparison"><h3>같은 구역의 직전 평가</h3><ZonePreviousComparison evaluationId={evaluationId} /></section>
   </section>;
 }

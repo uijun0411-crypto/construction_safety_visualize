@@ -24,6 +24,8 @@ from . import watcher_input
 from . import materials
 from . import weather
 from . import weather_risk
+from . import zone_relations
+from . import interference
 
 ROOT = Path(__file__).resolve().parent
 MAX_BLUEPRINT_BYTES = 3_000_000
@@ -160,6 +162,44 @@ class ZoneAssessmentInput(ZoneQuestionsInput):
     weather_exposure: Literal["실외", "실내", "확인불가"] = "확인불가"
 
 
+class ZoneScheduleInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    start_at: StrictStr | None = Field(default=None, max_length=16)
+    end_at: StrictStr | None = Field(default=None, max_length=16)
+
+    @model_validator(mode="after")
+    def validate_schedule(self):
+        if self.start_at is not None:
+            try:
+                start = datetime.fromisoformat(self.start_at)
+            except ValueError as error:
+                raise ValueError("날짜와 시간을 확인해 주세요.") from error
+        if self.end_at is not None:
+            try:
+                end = datetime.fromisoformat(self.end_at)
+            except ValueError as error:
+                raise ValueError("날짜와 시간을 확인해 주세요.") from error
+        if self.start_at is not None and self.end_at is not None and start >= end:
+            raise ValueError("종료일시는 시작일시보다 늦어야 합니다.")
+        return self
+
+
+class ZonePairConfirmation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    zone_id_a: UUID
+    zone_id_b: UUID
+    actual_adjacent: StrictBool | None = None
+    spark_reaches: StrictBool | None = None
+    vapor_reaches: StrictBool | None = None
+    barrier: Literal["있음", "없음", "확인불가"] | None = None
+    ventilation: Literal["양호", "보통", "미흡", "확인불가"] | None = None
+
+
+class ZoneInterferenceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirmations: list[ZonePairConfirmation] = Field(default_factory=list, max_length=500)
+
+
 class Comparison(BaseModel):
     model_config = ConfigDict(extra="forbid")
     before_id: str = Field(min_length=1, max_length=100)
@@ -290,6 +330,70 @@ def create_app(storage_path=None, origins=None):
         zones = evaluation_storage.list_site_work_zones(storage, str(site_id), str(image_id))
         return {"작업구역": [work_zone_result(zone) for zone in zones]}
 
+    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zone-relations")
+    def get_zone_relations(site_id: UUID, image_id: UUID):
+        require_site_image(site_id, image_id)
+        zones = evaluation_storage.list_site_work_zones(storage, str(site_id), str(image_id))
+        schedules = {}
+        for zone in zones:
+            draft = evaluation_storage.load_zone_draft(storage, str(site_id), str(image_id), zone["zone_id"])
+            schedules[zone["zone_id"]] = (draft or {}).get("작업시간") or {}
+        return {"현장ID": str(site_id), "이미지ID": str(image_id),
+                "구역쌍분석": zone_relations.compare_zones(zones, schedules)}
+
+    def zone_interference_result(site_id, image_id, body):
+        require_site_image(site_id, image_id)
+        zones = evaluation_storage.list_site_work_zones(storage, str(site_id), str(image_id))
+        schedules, inputs, drafts = {}, {}, {}
+        valid_ids = {zone["zone_id"] for zone in zones}
+        for zone in zones:
+            zone_id = zone["zone_id"]
+            draft = evaluation_storage.load_zone_draft(storage, str(site_id), str(image_id), zone_id) or {}
+            drafts[zone_id] = draft
+            latest = evaluation_storage.latest_zone_assessment(storage, str(site_id), str(image_id), zone_id) or {}
+            schedules[zone_id] = draft.get("작업시간") or {}
+            inputs[zone_id] = draft if draft.get("task_id") else latest.get("입력조건") or {}
+        confirmations = {}
+        for zone_id, draft in drafts.items():
+            for other_id, values in (draft.get("동시작업확인") or {}).items():
+                if other_id in valid_ids and other_id != zone_id:
+                    confirmations[tuple(sorted((zone_id, other_id)))] = values
+        updates = {}
+        for item in body.confirmations:
+            first, second = str(item.zone_id_a), str(item.zone_id_b)
+            if first == second or first not in valid_ids or second not in valid_ids:
+                raise HTTPException(422, "확인 대상은 서로 다른 현재 조감도 작업구역이어야 합니다.")
+            pair = tuple(sorted((first, second)))
+            if pair in updates:
+                raise HTTPException(422, "같은 구역 조합의 확인 정보가 중복되었습니다.")
+            updates[pair] = item.model_dump(exclude={"zone_id_a", "zone_id_b"})
+        for pair, values in updates.items():
+            first, second = pair
+            draft = drafts[first]
+            draft.setdefault("동시작업확인", {})[second] = values
+            updated_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+            draft["수정시각"] = updated_at
+            evaluation_storage.save_zone_draft(storage, str(site_id), str(image_id), first, draft, updated_at)
+        confirmations.update(updates)
+        relations = zone_relations.compare_zones(zones, schedules)
+        analyzed = interference.analyze_pairs(relations, zones, inputs, confirmations)
+        zone_names = {zone["zone_id"]: zone["name"] for zone in zones}
+        for item in analyzed:
+            a_id, b_id = item["작업구역ID_A"], item["작업구역ID_B"]
+            item["작업구역명_A"] = zone_names[a_id]
+            item["작업구역명_B"] = zone_names[b_id]
+            item["작업시간"]["구역별"] = {a_id: schedules[a_id], b_id: schedules[b_id]}
+        return {"현장ID": str(site_id), "이미지ID": str(image_id),
+                "동시작업분석": analyzed}
+
+    @app.get("/api/sites/{site_id}/blueprints/{image_id}/zone-interference")
+    def get_zone_interference(site_id: UUID, image_id: UUID):
+        return zone_interference_result(site_id, image_id, ZoneInterferenceInput())
+
+    @app.post("/api/sites/{site_id}/blueprints/{image_id}/zone-interference")
+    def review_zone_interference(site_id: UUID, image_id: UUID, body: ZoneInterferenceInput):
+        return zone_interference_result(site_id, image_id, body)
+
     @app.post("/api/sites/{site_id}/blueprints/{image_id}/zones")
     def add_work_zone(site_id: UUID, image_id: UUID, body: WorkZoneInput):
         require_site_image(site_id, image_id)
@@ -323,6 +427,15 @@ def create_app(storage_path=None, origins=None):
     @app.delete("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}")
     def remove_work_zone(site_id: UUID, image_id: UUID, zone_id: UUID):
         deleted = evaluation_storage.delete_site_work_zone(storage, str(zone_id), str(site_id), str(image_id))
+        if deleted:
+            for remaining in evaluation_storage.list_site_work_zones(storage, str(site_id), str(image_id)):
+                draft = evaluation_storage.load_zone_draft(storage, str(site_id), str(image_id), remaining["zone_id"])
+                confirmations = (draft or {}).get("동시작업확인") or {}
+                if str(zone_id) in confirmations:
+                    del confirmations[str(zone_id)]
+                    updated_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+                    draft["수정시각"] = updated_at
+                    evaluation_storage.save_zone_draft(storage, str(site_id), str(image_id), remaining["zone_id"], draft, updated_at)
         return {"삭제됨": deleted}
 
     def zone_task(task_id):
@@ -371,6 +484,17 @@ def create_app(storage_path=None, origins=None):
         latest = evaluation_storage.latest_zone_assessment(storage, str(site_id), str(image_id), str(zone_id))
         status = "미작성" if draft is None and latest is None else "완료" if latest and (draft is None or draft.get("입력SHA256") == latest.get("입력SHA256")) else "재계산 필요" if latest else "작성 중"
         return {"초안": draft, "최근평가": latest, "입력상태": status}
+
+    @app.put("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/schedule")
+    def save_zone_schedule(site_id: UUID, image_id: UUID, zone_id: UUID, body: ZoneScheduleInput):
+        require_zone(site_id, image_id, zone_id)
+        draft = evaluation_storage.load_zone_draft(storage, str(site_id), str(image_id), str(zone_id)) or {
+            "현장ID": str(site_id), "이미지ID": str(image_id), "작업구역ID": str(zone_id)}
+        draft["작업시간"] = {"시작일시": body.start_at, "종료일시": body.end_at}
+        updated_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        draft["수정시각"] = updated_at
+        evaluation_storage.save_zone_draft(storage, str(site_id), str(image_id), str(zone_id), draft, updated_at)
+        return {"작업시간": draft["작업시간"]}
 
     @app.get("/api/sites/{site_id}/blueprints/{image_id}/zones/{zone_id}/assessments")
     def zone_assessment_versions(site_id: UUID, image_id: UUID, zone_id: UUID):
@@ -477,9 +601,14 @@ def create_app(storage_path=None, origins=None):
     def save_zone_assessment_draft(site_id: UUID, image_id: UUID, zone_id: UUID, body: ZoneAssessmentInput):
         require_zone(site_id, image_id, zone_id)
         zone_schema(body)
+        existing_draft = evaluation_storage.load_zone_draft(storage, str(site_id), str(image_id), str(zone_id))
         draft = {**body.model_dump(mode="json"), "현장ID": str(site_id), "이미지ID": str(image_id),
                  "작업구역ID": str(zone_id), "입력SHA256": zone_fingerprint(body),
                  "수정시각": datetime.now(timezone.utc).isoformat(timespec="microseconds")}
+        if existing_draft and "작업시간" in existing_draft:
+            draft["작업시간"] = existing_draft["작업시간"]
+        if existing_draft and "동시작업확인" in existing_draft:
+            draft["동시작업확인"] = existing_draft["동시작업확인"]
         evaluation_storage.save_zone_draft(storage, str(site_id), str(image_id), str(zone_id), draft, draft["수정시각"])
         latest = evaluation_storage.latest_zone_assessment(storage, str(site_id), str(image_id), str(zone_id))
         return {"초안": draft, "입력상태": "완료" if latest and latest.get("입력SHA256") == draft["입력SHA256"] else "재계산 필요" if latest else "작성 중"}
@@ -531,6 +660,10 @@ def create_app(storage_path=None, origins=None):
         except materials.MaterialDataError as error:
             raise HTTPException(503, str(error)) from error
         save_zone_assessment_draft(site_id, image_id, zone_id, body)
+        current_draft = evaluation_storage.load_zone_draft(storage, str(site_id), str(image_id), str(zone_id)) or {}
+        record["작업시간"] = current_draft.get("작업시간") or {"시작일시": None, "종료일시": None}
+        record["동시작업분석"] = zone_interference_result(site_id, image_id, ZoneInterferenceInput())["동시작업분석"]
+        record["동시작업분석기준버전"] = interference.VERSION
         evaluation_storage.save_zone_assessment(storage, str(site_id), str(image_id), str(zone_id), record)
         return {"평가": record, "입력상태": "완료"}
 

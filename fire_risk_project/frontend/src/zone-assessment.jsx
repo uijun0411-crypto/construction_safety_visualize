@@ -11,6 +11,7 @@ const names = { '미작성': '미작성', '작성 중': '작성 중', '완료': 
 export default function ZoneAssessment({ siteId, image, zones, selected, siteName, weather, reassessment = null, onEvaluated }) {
   const [tasks, setTasks] = useState([]);
   const [drafts, setDrafts] = useState({});
+  const [schedules, setSchedules] = useState({});
   const [states, setStates] = useState({});
   const [results, setResults] = useState({});
   const [schema, setSchema] = useState(null);
@@ -21,6 +22,7 @@ export default function ZoneAssessment({ siteId, image, zones, selected, siteNam
   const schemaTask = useRef('');
   const draftsRef = useRef({});
   const queues = useRef({});
+  const scheduleQueues = useRef({});
   const loaded = useRef(new Set());
   const edited = useRef(new Set());
   const imageId = image?.image_id;
@@ -46,6 +48,9 @@ export default function ZoneAssessment({ siteId, image, zones, selected, siteNam
       loaded.current.add(zoneKey);
       const url = `/sites/${encodeURIComponent(siteId)}/blueprints/${encodeURIComponent(imageId)}/zones/${encodeURIComponent(zone.zone_id)}/assessment`;
       api(url, undefined, controller.signal).then(data => {
+        const savedSchedule = data['초안']?.['작업시간'] || {};
+        setSchedules(current => current[zoneKey] ? current : { ...current, [zoneKey]: {
+          start_at: savedSchedule['시작일시'] || '', end_at: savedSchedule['종료일시'] || '' } });
         const restoring = reassessment?.record?.['작업구역ID'] === zone.zone_id &&
           reassessment?.record?.['현장조감도']?.['이미지ID'] === imageId ? reassessment.inputs : null;
         if (restoring && !draftsRef.current[zoneKey]) {
@@ -114,6 +119,7 @@ export default function ZoneAssessment({ siteId, image, zones, selected, siteNam
     setBusy(true); setError(''); setNotice('');
     try {
       if (queues.current[key]) await queues.current[key].catch(() => {});
+      if (scheduleQueues.current[key]) await scheduleQueues.current[key].catch(() => {});
       const current = draftsRef.current[key] || draft;
       const response = await api(`${path}/evaluate`, bodyFor(current));
       setResults(values => ({ ...values, [key]: response['평가'] }));
@@ -126,6 +132,23 @@ export default function ZoneAssessment({ siteId, image, zones, selected, siteNam
 
   if (!imageId || !visibleZones.length) return null;
   const extras = draft.watcher_answers || {};
+  const schedule = schedules[key] || { start_at: '', end_at: '' };
+  async function updateSchedule(field, value) {
+    const next = { ...schedule, [field]: value };
+    setSchedules(current => ({ ...current, [key]: next }));
+    if (next.start_at && next.end_at && new Date(next.start_at) >= new Date(next.end_at)) {
+      setError('종료일시는 시작일시보다 늦어야 합니다.');
+      return;
+    }
+    try {
+      const pending = (scheduleQueues.current[key] || Promise.resolve()).catch(() => {}).then(() =>
+        api(`${path}/schedule`, { start_at: next.start_at || null, end_at: next.end_at || null }, undefined, 'PUT'));
+      scheduleQueues.current[key] = pending;
+      await pending;
+      setError(''); setNotice(!next.start_at && !next.end_at ? '작업시간을 비웠습니다.' : next.start_at && next.end_at ? '작업시간이 저장되었습니다.' : '입력 중인 작업시간이 저장되었습니다.');
+    }
+    catch (e) { setError(e.message); }
+  }
   const progress = inputProgress(schema, draft.answers || {}, extras, draft.materials || emptyMaterials());
   return <section className="panel zone-assessment-panel">
     <div className="step-title"><span>03</span><h3>구역별 화재위험성평가</h3></div>
@@ -136,6 +159,11 @@ export default function ZoneAssessment({ siteId, image, zones, selected, siteNam
     })}</div>
     {!activeZone ? <p className="muted">조감도 또는 구역 목록에서 평가할 작업구역을 선택하세요.</p> : <>
       <h4>{activeZone.name} 위험조건</h4>
+      <div className="zone-schedule-fields">
+        <label className="field">작업 시작일시<input type="datetime-local" value={schedule.start_at} onChange={e => updateSchedule('start_at', e.target.value)} /></label>
+        <label className="field">작업 종료일시<input type="datetime-local" value={schedule.end_at} onChange={e => updateSchedule('end_at', e.target.value)} /></label>
+        <p className="field-help">작업시간은 구역별로 저장됩니다. 입력하지 않아도 위험성평가를 진행할 수 있습니다.</p>
+      </div>
       <label className="field">작업 종류
         <select value={draft.task_id || ''} onChange={e => change({ ...blank(), task_id: e.target.value })}>
           <option value="">공정 DB의 작업을 선택하세요</option>
