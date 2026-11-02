@@ -10,6 +10,7 @@ const answer = (row, prefix) => ['조건제외', '시점제외'].includes(row[pr
 export function PreviousResult({ comparison }) {
   if (!comparison) return <p className="empty">비교 가능한 이전 평가기록이 없습니다.</p>;
   const [before, after] = comparison['평가요약'];
+  const standardized = before['점수기준버전'] === '점검상태-0-1-2-v1' && after['점수기준버전'] === '점검상태-0-1-2-v1';
   const info = comparison['비교안내'], delta = info['위험지수차이(이후-이전)'];
   const rows = comparison['전체항목'] || [];
   const groups = [
@@ -22,14 +23,14 @@ export function PreviousResult({ comparison }) {
   return <>
     <div className="table-wrap" tabIndex="0"><table><thead><tr><th>구분</th><th>이전 평가</th><th>현재 평가</th></tr></thead><tbody>
       <tr><th>평가일시</th><td>{date(before['평가일시'])}</td><td>{date(after['평가일시'])}</td></tr>
-      <tr><th>화재위험지수</th><td>{score(before['위험지수'])}</td><td>{score(after['위험지수'])}</td></tr>
-      <tr><th>위험수준</th><td>{before['기본위험등급(잠정)'] || '자료 없음'}</td><td>{after['기본위험등급(잠정)'] || '자료 없음'}</td></tr>
+      <tr><th>{standardized?'점검상태지수':'저장 당시 지수'}</th><td>{score(before['위험지수'])}</td><td>{score(after['위험지수'])}</td></tr>
+      <tr><th>등급</th><td>{before['기본위험등급(잠정)'] || '미적용'}</td><td>{after['기본위험등급(잠정)'] || '미적용'}</td></tr>
     </tbody></table></div>
-    <p className="comparison-outcome">위험지수 변화: <b>{number(delta) ? `${delta > 0 ? '+' : ''}${score(delta)}점` : '산정 보류'}</b> · 평가결과: <b>{info['변화상태']}</b></p>
+    <p className="comparison-outcome">{standardized?'점검상태지수':'저장 지수'} 변화: <b>{number(delta) ? `${delta > 0 ? '+' : ''}${score(delta)}점` : '산정 보류'}</b> · 평가결과: <b>{info['변화상태']}</b></p>
     {!info['점수차이표시가능'] && <p className="notice">직접 비교할 수 없습니다: {info['비교제한사유']}</p>}
-    {info['점수차이표시가능'] && <div aria-label="이전·현재 위험지수 비교">{[['이전 위험지수', before], ['현재 위험지수', after]].map(([label, r]) => <div className="bar-row" key={label}><div><span>{label}</span><b>{score(r['위험지수'])}점</b></div><div className={'bar-track ' + (r === before ? 'before-bar' : 'teal')} aria-hidden="true"><div style={{ width: `${Math.min(100, Math.max(0, r['위험지수']))}%` }} /></div></div>)}</div>}
+    {info['점수차이표시가능'] && <div aria-label="이전·현재 평가 지수 비교">{[[`이전 ${standardized?'점검상태지수':'저장 지수'}`, before], [`현재 ${standardized?'점검상태지수':'저장 지수'}`, after]].map(([label, r]) => <div className="bar-row" key={label}><div><span>{label}</span><b>{score(r['위험지수'])}점</b></div><div className={'bar-track ' + (r === before ? 'before-bar' : 'teal')} aria-hidden="true"><div style={{ width: `${Math.min(100, Math.max(0, r['위험지수']))}%` }} /></div></div>)}</div>}
     {groups.map(([label, items]) => <details className="evidence-group" key={label} open={label === '개선된 항목' || label === '악화된 항목'}><summary>{label} · {items.length}건</summary>{items.length ? items.map(r => <article className="change-card" key={r['항목ID']}><h4>{r['확인항목']}</h4><p>이전 응답: {answer(r, '이전')} → 현재 응답: {answer(r, '이후')}</p><p>가중점수: {score(r['이전_가중점수'])} → {score(r['이후_가중점수'])}</p><span className="state-badge">{r['변화분류']}</span></article>) : <p className="muted">해당 항목 없음</p>}</details>)}
-    <p className="muted">추가 개선 항목은 현재 양수로 집계된 위험요인입니다. 평가 제외·미확인·자료 누락은 0점으로 간주하지 않습니다.</p>
+    <p className="muted">{standardized?'점수 기준은 충족 0점, 확인불가 1점, 미충족 2점입니다. 평가 제외와 자료 누락은 0점으로 간주하지 않습니다.':'이전 점수 기준으로 저장된 기록입니다. 새 점수 기준으로 재계산하지 않았습니다.'}</p>
     <p className="muted">{info['해석']}</p>
     <MaterialChange value={comparison['가연물변화']}/>
   </>;

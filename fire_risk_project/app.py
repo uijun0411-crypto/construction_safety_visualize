@@ -116,8 +116,9 @@ with evaluate_tab:
         st.subheader("3. 평가 결과")
         summary = record["요약"]
         left, right = st.columns(2)
-        left.metric("위험지수 (0–100)", f"{summary['위험지수']:.2f}" if summary["위험지수"] is not None else "평가불가")
-        right.metric("기본위험등급 · 잠정", summary["기본위험등급(잠정)"])
+        left.metric("점검상태지수 (0–100)", f"{summary['위험지수']:.2f}" if summary["위험지수"] is not None else "평가불가")
+        st.caption("점수 기준: 기준 충족 0점 · 확인불가 1점 · 기준 미충족 2점. 모든 집계 항목 가중치는 1이며, 사고확률이나 법정 위험등급이 아닙니다.")
+        right.metric("점검 등급", summary["기본위험등급(잠정)"])
         st.warning(summary["최종판정"])
         st.info(record["화재감시자검토"]["확인메시지"])
         with st.expander("질문별 계산 결과"):

@@ -44,6 +44,8 @@ def compare(before, after):
     for key in ("평가시점", "최대가중점수"):
         if a.get(key) is None or b.get(key) is None or a[key] != b[key]:
             reasons.append(key + " 불일치 또는 누락")
+    if a.get("점수기준버전") != b.get("점수기준버전"):
+        reasons.append("점수 기준 버전 불일치")
     if not all(numeric(s.get("위험지수")) for s in (a, b)):
         reasons.append("위험지수 미산정")
     left = {r["항목ID"]: r for r in before.get("응답상세", [])}

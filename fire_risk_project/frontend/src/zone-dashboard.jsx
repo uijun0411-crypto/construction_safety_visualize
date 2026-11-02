@@ -112,16 +112,16 @@ export default function ZoneDashboard({ record, revision, fallback }) {
           })}
         </svg>
       </div>
-      <p className="muted zone-weather-note">위험수준은 저장된 평가결과를 표시합니다. 구역별 점수는 합산·평균하지 않습니다. 기상정보는 현장 공통정보이며 구역 점수에 별도로 더하지 않습니다.</p>
-      <div className="zone-site-weather"><h4>현장 공통 기상정보</h4><WeatherSummary snapshot={record?.['기상정보']} location={record?.['현장위치']} /><p className="muted">현장 공통 참고정보이며 구역별 위험지수에 별도로 더하지 않습니다.</p></div>
-      <div className="zone-highest" style={{ borderLeftColor: colors[highest] || colors['확인필요'] }}><b>현장 구역 요약</b><span>가장 높은 위험수준: <strong>{highest}</strong></span><span>{maxIndex >= 0 ? '구역별 결과는 아래 표에서 확인하세요.' : '완료된 구역 평가가 없습니다.'}</span></div>
-      <div className="section-heading zone-summary-heading"><h3>구역별 평가 요약</h3><label className="field">정렬<select value={sort} onChange={event => setSort(event.target.value)}><option value="risk">위험수준 높은 순</option><option value="score">위험지수 높은 순</option><option value="name">구역명순</option></select></label></div>
-      <div className="table-wrap" tabIndex="0"><table className="zone-summary-table"><thead><tr><th>구역명</th><th>작업명</th><th>위험지수</th><th>위험수준</th><th>평가 완료 여부</th><th>개선 필요사항</th></tr></thead><tbody>
+      <p className="muted zone-weather-note">구역별 점검상태지수는 해당 구역의 평가결과입니다. 구역별 점수는 합산·평균하지 않습니다. 기상정보는 현장 공통정보이며 점수에 더하지 않습니다.</p>
+      <div className="zone-site-weather"><h4>현장 공통 기상정보</h4><WeatherSummary snapshot={record?.['기상정보']} location={record?.['현장위치']} /><p className="muted">현장 공통 참고정보이며 구역별 점검상태지수에 별도로 더하지 않습니다.</p></div>
+      <div className="zone-highest" style={{ borderLeftColor: colors[highest] || colors['확인필요'] }}><b>현장 구역 요약</b><span>점검상태지수가 가장 높은 구역은 아래 표에서 확인하세요.</span><span>{maxIndex >= 0 ? '평가된 구역별 결과입니다.' : '완료된 구역 평가가 없습니다.'}</span></div>
+      <div className="section-heading zone-summary-heading"><h3>구역별 평가 요약</h3><label className="field">정렬<select value={sort} onChange={event => setSort(event.target.value)}><option value="risk">점검상태지수 높은 순</option><option value="score">점검상태지수 순</option><option value="name">구역명순</option></select></label></div>
+      <div className="table-wrap" tabIndex="0"><table className="zone-summary-table"><thead><tr><th>구역명</th><th>작업명</th><th>점검상태지수</th><th>등급 기준</th><th>평가 완료 여부</th><th>개선 필요사항</th></tr></thead><tbody>
         {rows.map(item => { const grade = item.record?.['요약']?.['기본위험등급(잠정)']; return <tr key={item.zone['작업구역ID']} className={item.zone['작업구역ID'] === selectedId ? 'active' : ''}>
           <td><button type="button" className="zone-table-select" onClick={() => setSelectedId(item.zone['작업구역ID'])}>{item.zone['이름']}</button></td><td>{item.taskName}</td><td>{scoreText(item.record?.['요약']?.['위험지수'])}</td><td><span className="zone-grade" style={{ color: colors[grade] || colors['확인필요'], borderColor: colors[grade] || colors['확인필요'] }}>{grade || '미평가'}</span></td><td>{statusFor(item)}</td><td>{improvement(item.record)}</td>
         </tr>; })}
       </tbody></table></div>
     </section>
-    {selected?.record ? <><div className="zone-detail-heading"><span className="eyebrow">SELECTED WORK ZONE</span><h2>{selected.zone['이름']} · {selected.taskName}</h2><p className="muted">{statusFor(selected)} · 위험수준 {selected.record['요약']?.['기본위험등급(잠정)']} · 위험지수 {scoreText(selected.record['요약']?.['위험지수'])}</p></div><Assessment record={selected.record} /><section className="panel"><h3>같은 구역의 직전 평가</h3><ZonePreviousComparison evaluationId={selected.record['평가ID']} /></section></> : <section className="panel"><h3>{selected?.zone['이름'] || '작업구역'} · 미평가</h3><p>이 구역의 평가결과가 아직 없습니다. 저장된 조감도 좌표와 작업구역은 표시되며, 평가를 완료하면 위험수준과 상세 결과가 연결됩니다.</p>{selected?.draft?.task_id && <p className="muted">작성 중인 작업: {selected.taskName}</p>}</section>}
+    {selected?.record ? <><div className="zone-detail-heading"><span className="eyebrow">SELECTED WORK ZONE</span><h2>{selected.zone['이름']} · {selected.taskName}</h2><p className="muted">{statusFor(selected)} · 점검상태지수 {scoreText(selected.record['요약']?.['위험지수'])}</p></div><Assessment record={selected.record} /><section className="panel"><h3>같은 구역의 직전 평가</h3><ZonePreviousComparison evaluationId={selected.record['평가ID']} /></section></> : <section className="panel"><h3>{selected?.zone['이름'] || '작업구역'} · 미평가</h3><p>이 구역의 평가결과가 아직 없습니다. 저장된 조감도 좌표와 작업구역은 표시되며, 평가를 완료하면 점검상태지수와 상세 결과가 연결됩니다.</p>{selected?.draft?.task_id && <p className="muted">작성 중인 작업: {selected.taskName}</p>}</section>}
   </>;
 }

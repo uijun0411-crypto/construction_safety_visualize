@@ -75,7 +75,7 @@ function RiskTrend({ site, zoneRecords, legacyTrends }) {
         {series.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
       </select></label>
     </div>
-    <p className="muted">위험지수 = 대표 질문의 가중점수 합계 ÷ 최대가중점수 × 100입니다. 표시된 분모는 평가 당시 최대가중점수이며, 점수규칙 데이터나 엔진 버전이 다른 기록은 같은 추이로 연결하지 않습니다.</p>
+    <p className="muted">동일한 점수 데이터, 엔진 버전, 분모를 사용한 기록끼리만 한 추이로 묶습니다. 계산 기준이 바뀐 기록은 서로 섞어 비교하지 않습니다.</p>
     {!site ? <p className="empty">현장을 선택하면 해당 현장 또는 작업구역의 기록을 표시합니다.</p> : !points.length ? <p className="empty">선택한 현장에 표시할 위험지수 기록이 없습니다.</p> : <>
       <div className="trend" role="img" aria-label="선택한 현장 또는 작업구역의 평가 시점별 위험지수 변화">
         <svg viewBox="0 0 800 280" preserveAspectRatio="xMidYMid meet">
@@ -224,10 +224,10 @@ function Dashboard({ current, zoneCurrent, selected, revision }) {
     {listError && <p className="error" role="alert">평가 목록 조회 실패: {listError}</p>}
     {detailError ? <p className="error" role="alert">{detailError}</p> : view && view !== 'current' && !detail ? <p role="status">평가 불러오는 중…</p> : <ZoneDashboard key={view === 'current' ? current?.['평가ID'] || 'current' : view} record={view === 'current' ? displayRecord : detail} revision={retry + revision} fallback={<><Assessment record={view === 'current' ? displayRecord : detail} /><PreviousComparison key={view === 'current' ? current?.['평가ID'] : view} record={view === 'current' ? displayRecord : detail} revision={retry + revision} /></>} />}
     {!detailError && (view === 'current' || detail) && <InterferenceCard record={displayRecord} live={view === 'current'} revision={retry + revision} />}
-    <section className="panel"><div className="section-heading"><div><h3>저장된 평가 현황</h3><p className="muted">이 화면에서는 저장된 평가결과와 위험지수의 변화를 확인할 수 있습니다. 현장과 작업구역을 선택하여 이전 평가와 비교해 보세요.</p></div><label className="field">현장 필터<select value={site} onChange={e => { setSite(e.target.value); }}><option value="">전체 현장</option>{siteChoices.map(s => <option key={s}>{s}</option>)}</select></label></div>
+    <section className="panel"><div className="section-heading"><div><h3>저장된 평가 현황</h3><p className="muted">저장된 평가결과와 점검상태지수의 변화를 확인합니다. 계산 기준이 다른 평가는 같은 추이로 비교하지 않습니다.</p></div><label className="field">현장 필터<select value={site} onChange={e => { setSite(e.target.value); }}><option value="">전체 현장</option>{siteChoices.map(s => <option key={s}>{s}</option>)}</select></label></div>
     {error ? <p className="error" role="alert">{error}</p> : !stats ? <p role="status">불러오는 중…</p> : <><Metrics items={[["저장 평가", stats.count, '기존 단일 작업 평가기록 수'], ['현장', stats.site_count, '기존 단일 작업 평가기록이 존재하는 고유 현장 수'], ['판정 보류', stats.held_count, '기존 단일 작업 평가 중 최종판정이 보류로 시작한 기록 수']]} /><p className="muted">같은 현장의 반복 평가도 각각 한 건입니다. 저장 당시의 잠정등급이며 사고 건수나 확률이 아닙니다.</p>
     {Object.entries(stats.grades).map(([grade, count]) => <div className="bar-row" key={grade}><div><span>{grade}</span><b>{count}건</b></div><div className="bar-track teal"><div style={{ width: `${count / Math.max(stats.count, 1) * 100}%`, background: colors[grade] || colors['확인필요'] }} /></div></div>)}{!stats.count && <p className="empty">평가를 저장하면 현황이 표시됩니다.</p>}
-    <h3>화재위험지수 변화 추이</h3><p className="muted">선택한 현장 또는 작업구역의 평가 시점별 위험지수 변화를 보여줍니다.</p><RiskTrend site={site} zoneRecords={zoneRecords} legacyTrends={stats?.trends || []} /></>}
+    <h3>평가지수 변화 추이</h3><p className="muted">선택한 현장 또는 작업구역의 동일 계산 기준에 따른 평가 시점별 변화를 보여줍니다.</p><RiskTrend site={site} zoneRecords={zoneRecords} legacyTrends={stats?.trends || []} /></>}
     </section></>;
 }
 

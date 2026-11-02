@@ -6,12 +6,14 @@ export const colors={'낮음':'#23786b','주의':'#a98012','높음':'#c66b24','�
 const txt=v=>v==null?'—':typeof v==='object'?JSON.stringify(v):String(v);
 const fmt=v=>v==null?'미산정':Number(v).toFixed(2);
 const split=v=>(v||'').split(';').filter(Boolean);
-export function responseStatus(r){
- if(r['적용상태']!=='적용')return '평가제외';
- if(r['사용자응답']==null||r['점수']==null||['','확인불가','해당없음'].includes(r['사용자응답']))return '확인필요';
- return Number(r['점수'])>0?'점수 발생':'0점';
+export function responseStatus(r, standardized=false){
+ if(r['적용상태']!=='적용'||Number(r['가중치'])===0||r['사용자응답']==='해당없음')return '평가제외';
+ if(r['사용자응답']==null||r['점수']==null||r['사용자응답']==='')return '확인필요';
+ if(!standardized)return ['확인불가'].includes(r['사용자응답'])?'확인필요':Number(r['점수'])>0?'점수 발생':'0점';
+ if(r['사용자응답']==='확인불가')return '확인불가 · 1점';
+ return Number(r['점수'])===0?'기준 충족 · 0점':'기준 미충족 · 2점';
 }
-const statusColors={'0점':'#23786b','점수 발생':'#c66b24','확인필요':'#7d8993','평가제외':'#c8d0d5'};
+const statusColors={'기준 충족 · 0점':'#23786b','확인불가 · 1점':'#a98012','기준 미충족 · 2점':'#c66b24','0점':'#23786b','점수 발생':'#c66b24','확인필요':'#7d8993','평가제외':'#c8d0d5'};
 function WeatherConditionReview({review}) {
  if(!review)return null;
  return <section className="panel"><h3>기상조건 시범 검토</h3><p><b>{review['상태']}</b>{review['점수']!=null&&` · ${review['점수']} / ${review['최대점수']} 참고점`}</p>
@@ -23,14 +25,15 @@ export function Ring({segments,value,label,sub}) {
  const total=segments.reduce((a,s)=>a+s.value,0);let offset=0;
  return <div className="ring" role="img" aria-label={label+' '+value+' '+sub}><svg viewBox="0 0 180 180"><circle cx="90" cy="90" r="72" fill="none" stroke="#edf1f3" strokeWidth="17"/>{total>0&&segments.map((s,i)=>{const part=s.value/total*100,start=offset;offset+=part;return <circle key={i} cx="90" cy="90" r="72" fill="none" stroke={s.color} strokeWidth="17" pathLength="100" strokeDasharray={part+' '+(100-part)} strokeDashoffset={-start} transform="rotate(-90 90 90)"/>})}</svg><div><strong>{value}</strong><b>{label}</b><small>{sub}</small></div></div>
 }
-export function RiskGauge({summary}) {
- const v=summary['위험지수'];return <Ring value={fmt(v)} label={summary['기본위험등급(잠정)']} sub="화재위험지수 / 100" segments={v==null?[]:[{value:Math.max(0,Math.min(100,v)),color:colors[summary['기본위험등급(잠정)']]||colors['확인필요']},{value:100-Math.max(0,Math.min(100,v)),color:'#edf1f3'}]}/>
+export function RiskGauge({summary,standardized}) {
+ const v=summary['위험지수'];return <Ring value={fmt(v)} label={standardized?'점검상태지수':'저장 당시 지수'} sub={standardized?'점검 상태점수 / 100':'기존 계산 기준'} segments={v==null?[]:[{value:Math.max(0,Math.min(100,v)),color:'#b87927'},{value:100-Math.max(0,Math.min(100,v)),color:'#edf1f3'}]}/>
 }
 export function confirmationCount(record) {
  const rows=record['응답상세'] || [];
  const integrated=!!record['화재감시자입력'];
  const extra=(record['화재감시자응답'] || []).filter(r=>!integrated||(!['W002','W003'].includes(r['추가질문ID'])&&r['적용상태']!=='질문대상아님'));
- return rows.filter(r=>responseStatus(r)==='확인필요').length+extra.filter(r=>r['응답']==='확인불가'||r['응답']==null||(integrated&&r['추가질문ID']==='W004'&&r['응답']==='예')).length+(record['가연물정보']?.['확인필요수']||0);
+ const standardized=record['요약']?.['점수기준버전']==='점검상태-0-1-2-v1';
+ return rows.filter(r=>['확인필요','확인불가 · 1점'].includes(responseStatus(r,standardized))).length+extra.filter(r=>r['응답']==='확인불가'||r['응답']==null||(integrated&&r['추가질문ID']==='W004'&&r['응답']==='예')).length+(record['가연물정보']?.['확인필요수']||0);
 }
 export function WatcherReview({record}) {
  const review=record['화재감시자검토'];
@@ -42,13 +45,13 @@ export function WatcherReview({record}) {
  </>}<p>{review['확인메시지']}</p></div>;
 }
 function RawTable({rows}){if(!rows?.length)return <p className="muted">자료 없음</p>;const keys=[...new Set(rows.flatMap(Object.keys))].filter(k=>!/(?:ID|아이디)$/i.test(k)&&k!=='적용상태');return <div className="table-wrap" tabIndex="0"><table><thead><tr>{keys.map(k=><th key={k}>{k}</th>)}</tr></thead><tbody>{rows.map((r,i)=><tr key={i}>{keys.map(k=><td key={k}>{txt(r[k])}</td>)}</tr>)}</tbody></table></div>}
-export function ResponseDistributionChart({rows}) {
- const counts=Object.fromEntries(Object.keys(statusColors).map(k=>[k,0]));rows.forEach(r=>counts[responseStatus(r)]++);
- return <div><h4>응답 상태 분포</h4><Ring value={rows.length} label="평가 항목" sub="전체 평가 항목 · 제외 포함" segments={Object.entries(counts).map(([k,v])=>({value:v,color:statusColors[k]}))}/><div className="legend">{Object.entries(counts).map(([k,v])=><span key={k}><i style={{background:statusColors[k]}}/>{k} <b>{v}</b></span>)}</div><p className="muted">0점은 안전 확정이 아닙니다. 개별 응답의 안전·주의·위험 분류 기준은 아직 제공되지 않습니다.</p></div>
+export function ResponseDistributionChart({rows,standardized}) {
+ const counts=Object.fromEntries(Object.keys(statusColors).map(k=>[k,0]));rows.forEach(r=>counts[responseStatus(r,standardized)]++);
+ return <div><h4>{standardized?'점검 상태 분포':'저장 당시 응답 상태 분포'}</h4><Ring value={rows.length} label="평가 항목" sub="전체 평가 항목 · 제외 포함" segments={Object.entries(counts).map(([k,v])=>({value:v,color:statusColors[k]}))}/><div className="legend">{Object.entries(counts).map(([k,v])=><span key={k}><i style={{background:statusColors[k]}}/>{k} <b>{v}</b></span>)}</div><p className="muted">{standardized?'충족 0점, 확인불가 1점, 미충족 2점 기준입니다. 확인불가를 충족으로 보지 않습니다.':'기존 평가기준으로 저장된 점수입니다. 새 0·1·2 기준으로 다시 계산하지 않았습니다.'}</p></div>
 }
-export function TopRiskFactors({rows,maximum}) {
+export function TopRiskFactors({rows,maximum,standardized}) {
  const top=rows.filter(r=>r['집계대표여부']&&r['가중점수']>0).sort((a,b)=>b['가중점수']-a['가중점수']).slice(0,5);
- return <div><h4>위험기여도 TOP 5</h4>{top.length?top.map(r=>{const contribution=maximum>0?r['가중점수']/maximum*100:r['가중점수'];return <div className="bar-row" key={r['항목ID']}><span className="state-badge" style={{color:statusColors[responseStatus(r)]}}>{responseStatus(r)}</span><div><span>{r['확인항목']}<small className="answer-note">{txt(r['사용자응답'])}</small></span><b>{fmt(contribution)}</b></div><div className="bar-track"><div style={{width:Math.min(100,contribution)+'%'}}/></div></div>}):<p className="empty">양수로 집계된 위험요인이 없습니다.</p>}<p className="muted">{maximum>0?'전체 위험지수에 더해진 점수입니다.':'전체 위험지수 미산정 상태입니다. 확인된 항목의 가중점수만 표시합니다.'} 상위 5개만 표시하며 중복 집계 항목은 제외합니다.</p></div>
+ return <div><h4>{standardized?'점수 발생 항목 TOP 5':'저장된 점수 항목 TOP 5'}</h4>{top.length?top.map(r=>{const contribution=maximum>0?r['가중점수']/maximum*100:r['가중점수'];return <div className="bar-row" key={r['항목ID']}><span className="state-badge" style={{color:statusColors[responseStatus(r,standardized)]}}>{responseStatus(r,standardized)}</span><div><span>{r['확인항목']}<small className="answer-note">{txt(r['사용자응답'])}</small></span><b>{fmt(contribution)}</b></div><div className="bar-track"><div style={{width:Math.min(100,contribution)+'%'}}/></div></div>}):<p className="empty">점수가 발생한 적용 항목이 없습니다.</p>}<p className="muted">{standardized?'각 항목의 점수가 전체 점검상태지수에 기여한 비율입니다. 동일 가중치를 적용하며, 중복 집계 항목은 대표 항목만 반영합니다.':'저장 당시 계산 기준에 따른 점수 기여입니다.'}</p></div>
 }
 function linked(record,row){return (record['근거스냅샷']?.standards || []).filter(s=>split(row['관련기준ID']).includes(s['기준ID']))}
 function Source({row}){return <><b>{row['법령_가이드명']}</b><p>{row['조문_문서번호']}</p>{/^https?:\/\//.test(row['출처URL']||'')&&<a href={row['출처URL']} target="_blank" rel="noreferrer">원문 확인</a>}</>}
@@ -66,7 +69,8 @@ export function EvidencePanel({record}) {
 export default function Assessment({record}) {
  if(!record)return <div className="empty panel">새 평가를 진행하거나 저장 기록에서 평가를 선택하세요.</div>;
  const summary=record['요약'] || {},rows=record['응답상세'] || [];
+ const standardized=summary['점수기준버전']==='점검상태-0-1-2-v1';
  const unknown=confirmationCount(record);
- return <section className="assessment"><div className="section-heading"><div><p className="eyebrow">ASSESSMENT RESULT</p><h2>{record['현장명']}</h2><p className="muted">{new Date(record['평가일시']).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} · {record['작업명'] || summary['작업명'] || '작업명 자료 없음'}</p></div></div><div className="panel result-hero"><RiskGauge summary={summary}/><div><h3>작업조건 기반 화재위험지수</h3><p className="muted">화재 발생확률이 아닙니다.</p>{summary['위험지수']==null&&<p className="notice">{summary['계산상태'] || '위험지수 미산정'}</p>}<div className="metrics">{[['평가항목',summary['적용질문수']],['확인 필요',record['응답상세'] ? unknown : null],['평가 제외',summary['제외질문수']]].map(([label,value])=><div className="metric" key={label}><span>{label}</span><strong>{value == null ? '자료 없음' : `${value}개`}</strong></div>)}</div>{(summary['최종판정']||'').startsWith('보류')&&<p className="muted provisional-note">잠정 평가 · 법령 적용조건과 현장 확인이 남아 있어 최종판정은 보류됩니다.</p>}</div></div><section className="panel"><h3>위험요인 분석</h3><div className="analysis-grid">{record['응답상세'] ? <><ResponseDistributionChart rows={rows}/><TopRiskFactors rows={rows} maximum={summary['최대가중점수']}/></> : <p className="muted">당시 위험요인 상세자료 없음</p>}</div><MaterialOverview record={record}/></section><section className="panel"><h3>평가 당시 현장 기상정보</h3><WeatherSummary snapshot={record['기상정보']} location={record['현장위치']}/></section><WeatherConditionReview review={record['기상조건검토']}/><RecommendedActions record={record}/><EvidencePanel record={record}/></section>
+ return <section className="assessment"><div className="section-heading"><div><p className="eyebrow">ASSESSMENT RESULT</p><h2>{record['현장명']}</h2><p className="muted">{new Date(record['평가일시']).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} · {record['작업명'] || summary['작업명'] || '작업명 자료 없음'}</p></div></div><div className="panel result-hero"><RiskGauge summary={summary} standardized={standardized}/><div><h3>{standardized?'작업 전 점검상태지수':'저장 당시 평가점수'}</h3><p className="muted">{standardized?'기준 충족 0점 · 확인불가 1점 · 기준 미충족 2점. 모든 집계 항목의 가중치는 1입니다.':'이 기록은 이전 점수 기준으로 저장되어 있으며 새 기준으로 재계산하지 않았습니다.'}</p>{summary['위험지수']==null&&<p className="notice">{summary['계산상태'] || '점수 미산정'}</p>}<div className="metrics">{[['평가항목',summary['적용질문수']],['확인 필요',record['응답상세'] ? unknown : null],['평가 제외',summary['제외질문수']]].map(([label,value])=><div className="metric" key={label}><span>{label}</span><strong>{value == null ? '자료 없음' : `${value}개`}</strong></div>)}</div>{standardized&&<p className="muted">지수 = 대표 항목 점수 합계 ÷ (대표 적용 항목 수 × 2) × 100. 점검 상태를 요약하며 사고확률이나 법정 위험등급을 뜻하지 않습니다.</p>}{(summary['최종판정']||'').startsWith('보류')&&<p className="muted provisional-note">잠정 평가 · 법령 적용조건과 현장 확인이 남아 있어 최종판정은 보류됩니다.</p>}</div></div><section className="panel"><h3>{standardized?'점검 항목 분석':'저장 당시 항목 분석'}</h3><div className="analysis-grid">{record['응답상세'] ? <><ResponseDistributionChart rows={rows} standardized={standardized}/><TopRiskFactors rows={rows} maximum={summary['최대가중점수']} standardized={standardized}/></> : <p className="muted">당시 점검 항목 상세자료 없음</p>}</div><MaterialOverview record={record}/></section><section className="panel"><h3>평가 당시 현장 기상정보</h3><WeatherSummary snapshot={record['기상정보']} location={record['현장위치']}/></section><WeatherConditionReview review={record['기상조건검토']}/><RecommendedActions record={record}/><EvidencePanel record={record}/></section>
 }
 

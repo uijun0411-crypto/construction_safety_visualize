@@ -5,22 +5,23 @@ import streamlit as st
 
 def contribution_table(record):
     detail = pd.DataFrame(record["응답상세"])
-    columns = ["항목ID", "확인항목", "가중점수", "위험지수 기여점수"]
+    columns = ["항목ID", "확인항목", "점수", "점검상태지수 기여점수"]
     if detail.empty:
         return pd.DataFrame(columns=columns)
     selected = detail.loc[detail["집계대표여부"].eq(True)].copy()
     maximum = record["요약"]["최대가중점수"]
-    selected["위험지수 기여점수"] = (
+    selected["점검상태지수 기여점수"] = (
         selected["가중점수"] / maximum * 100 if maximum and maximum > 0 else None
     )
-    return selected[columns].sort_values("가중점수", ascending=False).reset_index(drop=True)
+    selected["점수"] = selected["가중점수"]
+    return selected[columns].sort_values("점수", ascending=False).reset_index(drop=True)
 
 def render_assessment(record, key_prefix):
     summary = record["요약"]
     st.caption(f"{record['현장명']} · {record['평가일시']} · {record['평가ID']}")
     cards = st.columns(4)
     value = summary.get("위험지수")
-    cards[0].metric("위험지수", "미산정" if value is None else f"{value:.2f} / 100")
+    cards[0].metric("점검상태지수", "미산정" if value is None else f"{value:.2f} / 100")
     cards[1].metric("잠정등급", summary.get("기본위험등급(잠정)", "미검증"))
     cards[2].metric("집계 항목", summary.get("집계항목수", 0))
     cards[3].metric("제외 질문", summary.get("제외질문수", 0))
@@ -30,19 +31,19 @@ def render_assessment(record, key_prefix):
     with left:
         st.markdown("#### 점수에 기여한 위험요인")
         contribution = contribution_table(record)
-        positive = contribution.loc[contribution["가중점수"].gt(0)]
+        positive = contribution.loc[contribution["점수"].gt(0)]
         if positive.empty:
             st.info("양수로 집계된 위험요인이 없습니다. 적용조건과 미확인 항목은 별도로 확인하세요.")
         else:
             chart = alt.Chart(positive).mark_bar(color="#c56832", cornerRadiusEnd=3).encode(
-                x=alt.X("위험지수 기여점수:Q", title="전체 위험지수에 더해진 점수", scale=alt.Scale(zero=True)),
+                x=alt.X("점검상태지수 기여점수:Q", title="점검상태지수에 더해진 점수", scale=alt.Scale(zero=True)),
                 y=alt.Y("확인항목:N", sort="-x", title=None,
                         axis=alt.Axis(labelLimit=260)),
-                tooltip=["항목ID:N", "확인항목:N", alt.Tooltip("가중점수:Q", format=".2f"),
-                         alt.Tooltip("위험지수 기여점수:Q", format=".2f")],
+                tooltip=["항목ID:N", "확인항목:N", alt.Tooltip("점수:Q", format=".2f"),
+                         alt.Tooltip("점검상태지수 기여점수:Q", format=".2f")],
             ).properties(height=max(180, len(positive)*45))
             st.altair_chart(chart, width="stretch", key=key_prefix+"_contribution")
-        st.caption("중복집계 대표 항목만 표시합니다. 기여점수 합계는 전체 위험지수와 같습니다.")
+        st.caption("충족 0점·확인불가 1점·미충족 2점이며 모든 집계 항목의 가중치는 1입니다. 중복집계 대표 항목만 표시합니다.")
     with right:
         st.markdown("#### 확인이 필요한 응답")
         rows = record["응답상세"]
@@ -138,7 +139,7 @@ def render_dashboard(engine, storage, current_record):
         point=True, color="#3b7284"
     ).encode(
         x=alt.X("평가일시:T", title="평가일시"),
-        y=alt.Y("위험지수:Q", scale=alt.Scale(domain=[0, 100])),
+        y=alt.Y("위험지수:Q", title="점검상태지수", scale=alt.Scale(domain=[0, 100])),
         tooltip=["평가ID", "평가일시:T", "위험지수:Q", "잠정등급"],
     ).properties(height=260), width="stretch", key="dashboard_trend")
 

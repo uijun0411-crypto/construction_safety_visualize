@@ -412,13 +412,14 @@ def calculate_task_risk(task_id, answers):
     risk_index = total / maximum * 100 if maximum > 0 else None
     summary = {
         "작업ID": str(task_id).strip(), "평가시점": "작업시작전",
+        "점수기준버전": "점검상태-0-1-2-v1",
         "적용질문수": int(table["적용상태"].eq("적용").sum()),
         "제외질문수": len(check["제외질문ID"]),
         "입력질문수": sum(not is_missing(value) for value in answers.values()),
         "집계항목수": len(representatives),
         "총가중위험점수": total, "최대가중점수": maximum,
         "위험지수": risk_index,
-        "기본위험등급(잠정)": get_basic_grade(risk_index),
+        "기본위험등급(잠정)": "등급 미적용",
         "강제경고": "미검증",
         "최종판정": "보류: 법령·잔여 적용조건 미검증",
         "계산상태": "사전 시험 계산" if maximum > 0 else "계산 불가: 합산 대상 없음",
