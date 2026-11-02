@@ -29,6 +29,12 @@
 .action-card h4{margin:5px 0 16px}
 .action-card small{color:#748791}
 .action-card p{font-size:13px;line-height:1.85;overflow-wrap:anywhere}
+.repeat-mitigation .notice{margin-bottom:18px}
+.repeat-mitigation .questions{margin-bottom:0}
+.repeat-details{margin:0;display:grid;gap:8px;font-size:13px}
+.repeat-details div{display:flex;justify-content:space-between;gap:12px;border-top:1px solid #eef2f4;padding-top:8px}
+.repeat-details dt{color:#6d7f89}
+.repeat-details dd{margin:0;font-weight:700;text-align:right}
 .evidence-group{border-top:1px solid #e6ecef;padding:15px 0}
 .evidence-group article{padding:14px 0;border-bottom:1px solid #eef2f4;font-size:13px}
 a{color:#235d6b;text-underline-offset:3px}

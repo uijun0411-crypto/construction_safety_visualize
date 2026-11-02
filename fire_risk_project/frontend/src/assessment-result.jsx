@@ -11,9 +11,10 @@ export function responseStatus(r, standardized=false){
  if(r['사용자응답']==null||r['점수']==null||r['사용자응답']==='')return '확인필요';
  if(!standardized)return ['확인불가'].includes(r['사용자응답'])?'확인필요':Number(r['점수'])>0?'점수 발생':'0점';
  if(r['사용자응답']==='확인불가')return '확인불가 · 1점';
+ if(((r['항목ID']==='Q003'&&r['사용자응답']==='미실시')||(r['항목ID']==='Q004'&&r['사용자응답']==='미배치'))&&Number(r['점수'])===1)return '최초 미조치 · 1점';
  return Number(r['점수'])===0?'기준 충족 · 0점':'기준 미충족 · 2점';
 }
-const statusColors={'기준 충족 · 0점':'#23786b','확인불가 · 1점':'#a98012','기준 미충족 · 2점':'#c66b24','0점':'#23786b','점수 발생':'#c66b24','확인필요':'#7d8993','평가제외':'#c8d0d5'};
+const statusColors={'기준 충족 · 0점':'#23786b','확인불가 · 1점':'#a98012','최초 미조치 · 1점':'#a98012','기준 미충족 · 2점':'#c66b24','0점':'#23786b','점수 발생':'#c66b24','확인필요':'#7d8993','평가제외':'#c8d0d5'};
 function WeatherConditionReview({review}) {
  if(!review)return null;
  return <section className="panel"><h3>기상조건 시범 검토</h3><p><b>{review['상태']}</b>{review['점수']!=null&&` · ${review['점수']} / ${review['최대점수']} 참고점`}</p>
@@ -45,9 +46,9 @@ export function WatcherReview({record}) {
  </>}<p>{review['확인메시지']}</p></div>;
 }
 function RawTable({rows}){if(!rows?.length)return <p className="muted">자료 없음</p>;const keys=[...new Set(rows.flatMap(Object.keys))].filter(k=>!/(?:ID|아이디)$/i.test(k)&&k!=='적용상태');return <div className="table-wrap" tabIndex="0"><table><thead><tr>{keys.map(k=><th key={k}>{k}</th>)}</tr></thead><tbody>{rows.map((r,i)=><tr key={i}>{keys.map(k=><td key={k}>{txt(r[k])}</td>)}</tr>)}</tbody></table></div>}
-export function ResponseDistributionChart({rows,standardized}) {
+export function ResponseDistributionChart({rows,standardized,repeatRules=false}) {
  const counts=Object.fromEntries(Object.keys(statusColors).map(k=>[k,0]));rows.forEach(r=>counts[responseStatus(r,standardized)]++);
- return <div><h4>{standardized?'점검 상태 분포':'저장 당시 응답 상태 분포'}</h4><Ring value={rows.length} label="평가 항목" sub="전체 평가 항목 · 제외 포함" segments={Object.entries(counts).map(([k,v])=>({value:v,color:statusColors[k]}))}/><div className="legend">{Object.entries(counts).map(([k,v])=><span key={k}><i style={{background:statusColors[k]}}/>{k} <b>{v}</b></span>)}</div><p className="muted">{standardized?'충족 0점, 확인불가 1점, 미충족 2점 기준입니다. 확인불가를 충족으로 보지 않습니다.':'기존 평가기준으로 저장된 점수입니다. 새 0·1·2 기준으로 다시 계산하지 않았습니다.'}</p></div>
+ return <div><h4>{standardized?'점검 상태 분포':'저장 당시 응답 상태 분포'}</h4><Ring value={rows.length} label="평가 항목" sub="전체 평가 항목 · 제외 포함" segments={Object.entries(counts).map(([k,v])=>({value:v,color:statusColors[k]}))}/><div className="legend">{Object.entries(counts).map(([k,v])=><span key={k}><i style={{background:statusColors[k]}}/>{k} <b>{v}</b></span>)}</div><p className="muted">{standardized?(repeatRules?'충족 0점, 확인불가 1점, 지정 항목 최초 미조치 1점·반복 미조치 2점, 그 외 미충족 2점 기준입니다.':'충족 0점, 확인불가 1점, 미충족 2점 기준입니다. 확인불가를 충족으로 보지 않습니다.'):'기존 평가기준으로 저장된 점수입니다. 새 0·1·2 기준으로 다시 계산하지 않았습니다.'}</p></div>
 }
 export function TopRiskFactors({rows,maximum,standardized}) {
  const top=rows.filter(r=>r['집계대표여부']&&r['가중점수']>0).sort((a,b)=>b['가중점수']-a['가중점수']).slice(0,5);
@@ -58,6 +59,15 @@ function Source({row}){return <><b>{row['법령_가이드명']}</b><p>{row['조�
 export function RecommendedActions({record}) {
  const rows=(record['응답상세'] || []).filter(r=>r['적용상태']==='적용'&&(r['가중점수']>0||responseStatus(r)==='확인필요'));
  return <section className="panel"><h3>필요한 조치</h3><p className="muted">등록된 조치와 관련 근거입니다. 실제 적용·위반 여부나 조치 우선순위를 자동 확정하지 않습니다.</p><div className="questions">{rows.map(r=><article className="action-card" key={r['항목ID']}><span className="state-badge">{responseStatus(r)==='확인필요'?'확인필요':'조치 검토'}</span><h4>{r['확인항목']}</h4><small>현재 상태</small><p>{txt(r['사용자응답'])}</p>{linked(record,r).length?linked(record,r).map(s=><div key={s['기준ID']}><small>관련 조치</small><p>{s['필수조치']||'등록된 조치 내용 없음'}</p><details><summary>적용조건·근거 출처</summary><p>{s['적용조건']}</p><Source row={s}/></details></div>):<p className="muted">당시 저장된 조치 자료가 없습니다.</p>}</article>)}</div>{!rows.length&&<p className="muted">점수 발생·미확인 응답에 연결된 조치가 없습니다. 안전조치 완료를 뜻하지 않습니다.</p>}<WatcherReview record={record}/><MaterialActions record={record}/></section>
+}
+export function RepeatMitigationNotice({record}) {
+ const names={Q003:'불티·화염 통제조치',Q004:'화재감시자 배치 확인'};
+ const rows=new Map((record['응답상세']||[]).map(row=>[row['항목ID'],row]));
+ const repeated=(record['반복미조치판정']?.['항목']||[]).filter(item=>
+   names[item['항목ID']]&&item['상태']==='반복 미조치'&&Number(item['적용점수'])===2&&
+   rows.get(item['항목ID'])?.['집계대표여부']===true&&Number(rows.get(item['항목ID'])?.['점수'])===2);
+ if(!repeated.length)return null;
+ return <section className="panel repeat-mitigation" aria-label="반복 미조치 적용 내역"><h3>반복 미조치 적용 내역</h3><p className="notice">이전 평가에서 확인된 위험요인이 개선되지 않아 반복 미조치 가중치가 적용되었습니다.</p><div className="questions">{repeated.map(item=><article className="action-card" key={item['항목ID']}><span className="state-badge increase">반복 미조치</span><h4>{names[item['항목ID']]}</h4><dl className="repeat-details"><div><dt>이전 평가의 조치 상태</dt><dd>{txt(item['직전응답'])}</dd></div><div><dt>현재 평가의 조치 상태</dt><dd>{txt(item['현재응답'])}</dd></div><div><dt>최초 미조치 점수</dt><dd>1점</dd></div><div><dt>반복 미조치 적용 점수</dt><dd>2점</dd></div><div><dt>반복 미조치 여부</dt><dd>예</dd></div></dl></article>)}</div></section>;
 }
 export function EvidencePanel({record}) {
  const ids=new Set((record['응답상세'] || []).filter(r=>r['적용상태']==='적용').flatMap(r=>split(r['관련기준ID'])));
@@ -70,7 +80,8 @@ export default function Assessment({record}) {
  if(!record)return <div className="empty panel">새 평가를 진행하거나 저장 기록에서 평가를 선택하세요.</div>;
  const summary=record['요약'] || {},rows=record['응답상세'] || [];
  const standardized=summary['점수기준버전']==='점검상태-0-1-2-v1';
+ const repeatRules=summary['반복미조치기준버전']==='구역반복-v1';
  const unknown=confirmationCount(record);
- return <section className="assessment"><div className="section-heading"><div><p className="eyebrow">ASSESSMENT RESULT</p><h2>{record['현장명']}</h2><p className="muted">{new Date(record['평가일시']).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} · {record['작업명'] || summary['작업명'] || '작업명 자료 없음'}</p></div></div><div className="panel result-hero"><RiskGauge summary={summary} standardized={standardized}/><div><h3>{standardized?'작업 전 점검상태지수':'저장 당시 평가점수'}</h3><p className="muted">{standardized?'기준 충족 0점 · 확인불가 1점 · 기준 미충족 2점. 모든 집계 항목의 가중치는 1입니다.':'이 기록은 이전 점수 기준으로 저장되어 있으며 새 기준으로 재계산하지 않았습니다.'}</p>{summary['위험지수']==null&&<p className="notice">{summary['계산상태'] || '점수 미산정'}</p>}<div className="metrics">{[['평가항목',summary['적용질문수']],['확인 필요',record['응답상세'] ? unknown : null],['평가 제외',summary['제외질문수']]].map(([label,value])=><div className="metric" key={label}><span>{label}</span><strong>{value == null ? '자료 없음' : `${value}개`}</strong></div>)}</div>{standardized&&<p className="muted">지수 = 대표 항목 점수 합계 ÷ (대표 적용 항목 수 × 2) × 100. 점검 상태를 요약하며 사고확률이나 법정 위험등급을 뜻하지 않습니다.</p>}{(summary['최종판정']||'').startsWith('보류')&&<p className="muted provisional-note">잠정 평가 · 법령 적용조건과 현장 확인이 남아 있어 최종판정은 보류됩니다.</p>}</div></div><section className="panel"><h3>{standardized?'점검 항목 분석':'저장 당시 항목 분석'}</h3><div className="analysis-grid">{record['응답상세'] ? <><ResponseDistributionChart rows={rows} standardized={standardized}/><TopRiskFactors rows={rows} maximum={summary['최대가중점수']} standardized={standardized}/></> : <p className="muted">당시 점검 항목 상세자료 없음</p>}</div><MaterialOverview record={record}/></section><section className="panel"><h3>평가 당시 현장 기상정보</h3><WeatherSummary snapshot={record['기상정보']} location={record['현장위치']}/></section><WeatherConditionReview review={record['기상조건검토']}/><RecommendedActions record={record}/><EvidencePanel record={record}/></section>
+ return <section className="assessment"><div className="section-heading"><div><p className="eyebrow">ASSESSMENT RESULT</p><h2>{record['현장명']}</h2><p className="muted">{new Date(record['평가일시']).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} · {record['작업명'] || summary['작업명'] || '작업명 자료 없음'}</p></div></div><div className="panel result-hero"><RiskGauge summary={summary} standardized={standardized}/><div><h3>{standardized?'작업 전 점검상태지수':'저장 당시 평가점수'}</h3><p className="muted">{standardized?(repeatRules?'기준 충족 0점 · 확인불가 1점 · 지정 항목 최초 미조치 1점, 반복 미조치 2점 · 그 외 기준 미충족 2점. 모든 집계 항목의 가중치는 1입니다.':'기준 충족 0점 · 확인불가 1점 · 기준 미충족 2점. 모든 집계 항목의 가중치는 1입니다.'):'이 기록은 이전 점수 기준으로 저장되어 있으며 새 기준으로 재계산하지 않았습니다.'}</p>{summary['위험지수']==null&&<p className="notice">{summary['계산상태'] || '점수 미산정'}</p>}<div className="metrics">{[['평가항목',summary['적용질문수']],['확인 필요',record['응답상세'] ? unknown : null],['평가 제외',summary['제외질문수']]].map(([label,value])=><div className="metric" key={label}><span>{label}</span><strong>{value == null ? '자료 없음' : `${value}개`}</strong></div>)}</div>{standardized&&<p className="muted">지수 = 대표 항목 점수 합계 ÷ (대표 적용 항목 수 × 2) × 100. 점검 상태를 요약하며 사고확률이나 법정 위험등급을 뜻하지 않습니다.</p>}{(summary['최종판정']||'').startsWith('보류')&&<p className="muted provisional-note">잠정 평가 · 법령 적용조건과 현장 확인이 남아 있어 최종판정은 보류됩니다.</p>}</div></div><RepeatMitigationNotice record={record}/><section className="panel"><h3>{standardized?'점검 항목 분석':'저장 당시 항목 분석'}</h3><div className="analysis-grid">{record['응답상세'] ? <><ResponseDistributionChart rows={rows} standardized={standardized} repeatRules={repeatRules}/><TopRiskFactors rows={rows} maximum={summary['최대가중점수']} standardized={standardized}/></> : <p className="muted">당시 점검 항목 상세자료 없음</p>}</div><MaterialOverview record={record}/></section><section className="panel"><h3>평가 당시 현장 기상정보</h3><WeatherSummary snapshot={record['기상정보']} location={record['현장위치']}/></section><WeatherConditionReview review={record['기상조건검토']}/><RecommendedActions record={record}/><EvidencePanel record={record}/></section>
 }
 

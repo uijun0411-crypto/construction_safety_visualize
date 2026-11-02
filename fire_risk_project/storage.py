@@ -11,6 +11,9 @@ class StorageError(OSError):
     """Raised when the configured evaluation store is unavailable."""
 
 
+_NO_PREVIOUS_CHECK = object()
+
+
 def configured_storage(storage_path=None):
     if storage_path is not None:
         return storage_path
@@ -413,13 +416,27 @@ def zone_assessment_by_id(storage, evaluation_id):
     return None if row is None else row[0] if isinstance(row[0], dict) else json.loads(row[0])
 
 
-def save_zone_assessment(storage, site_id, image_id, zone_id, record):
+def save_zone_assessment(storage, site_id, image_id, zone_id, record,
+                         expected_previous_id=_NO_PREVIOUS_CHECK):
     serialized = json.dumps(record, ensure_ascii=False, allow_nan=False)
     postgres = is_postgres_storage(storage)
     query = ("INSERT INTO zone_assessments(evaluation_id, site_id, image_id, zone_id, payload, evaluated_at) VALUES (%s, %s, %s, %s, %s::jsonb, %s)"
              if postgres else "INSERT INTO zone_assessments(evaluation_id, site_id, image_id, zone_id, payload, evaluated_at) VALUES (?, ?, ?, ?, ?, ?)")
     connection = _connect_postgres(storage) if postgres else sqlite3.connect(Path(storage).expanduser().resolve())
     with closing(connection) as conn, conn:
+        if expected_previous_id is not _NO_PREVIOUS_CHECK:
+            if postgres:
+                conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)",
+                             (f"{site_id}:{image_id}:{zone_id}",))
+                latest_query = ("SELECT evaluation_id FROM zone_assessments WHERE site_id = %s AND image_id = %s "
+                                "AND zone_id = %s ORDER BY evaluated_at DESC, evaluation_id DESC LIMIT 1")
+            else:
+                conn.execute("BEGIN IMMEDIATE")
+                latest_query = ("SELECT evaluation_id FROM zone_assessments WHERE site_id = ? AND image_id = ? "
+                                "AND zone_id = ? ORDER BY evaluated_at DESC, evaluation_id DESC LIMIT 1")
+            latest = conn.execute(latest_query, (site_id, image_id, zone_id)).fetchone()
+            if (latest[0] if latest else None) != expected_previous_id:
+                raise ValueError("직전 구역 평가가 변경되었습니다. 최신 기록을 기준으로 다시 평가하세요.")
         conn.execute(query, (record["평가ID"], site_id, image_id, zone_id, serialized, record["평가일시"]))
 
 

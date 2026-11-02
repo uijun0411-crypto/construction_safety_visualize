@@ -717,6 +717,68 @@ def build_evaluation(site_name, task_id, answers, watcher_answers=None,
     return json.loads(json.dumps(record, ensure_ascii=False, allow_nan=False))
 
 
+def apply_zone_repeat_scores(record, previous=None, *, watcher_repeat_eligible=True):
+    """구역의 직전 완료 평가를 이용해 Q003·Q004의 미조치 점수만 조정합니다."""
+    targets = {"Q003": ("미실시", "실시"), "Q004": ("미배치", "배치")}
+    current_rows = {row["항목ID"]: row for row in record["응답상세"]}
+    previous_rows = {row["항목ID"]: row for row in (previous or {}).get("응답상세", [])}
+    decisions = []
+
+    for question_id, (omitted, completed) in targets.items():
+        row = current_rows.get(question_id)
+        answer = record["응답"].get(question_id)
+        old_row = previous_rows.get(question_id)
+        old_answer = (previous or {}).get("응답", {}).get(question_id)
+        decision = {"항목ID": question_id, "현재응답": answer, "직전응답": old_answer,
+                    "직전평가ID": (previous or {}).get("평가ID")}
+        if not row or row.get("적용상태") != "적용" or not row.get("점수합산대상"):
+            decision.update({"상태": "집계 제외 또는 확인 필요", "적용점수": None})
+        elif answer == completed:
+            decision.update({"상태": "조치 완료", "적용점수": 0})
+        elif answer == omitted:
+            if row.get("가중치") != 1 or row.get("최대가중점수") != 2:
+                raise ValueError(f"{question_id}: 반복 점수는 가중치 1·최대점수 2인 규칙에만 적용합니다.")
+            old_omitted = (old_answer == omitted and old_row is not None
+                           and old_row.get("적용상태") == "적용"
+                           and old_row.get("점수합산대상") is True)
+            eligible = question_id != "Q004" or watcher_repeat_eligible
+            if not eligible:
+                reason = "화재감시자 배치 대상·법정 예외조건 확인 필요"
+                row.update({"점수": None, "가중치": None, "가중점수": None,
+                            "최대가중점수": None, "점수합산대상": False,
+                            "집계대표여부": False, "확정상태": "점수미산정",
+                            "응답상태": "확인필요", "계산보류사유": reason})
+                record["요약"].update({"총가중위험점수": None, "최대가중점수": None,
+                                     "위험지수": None, "기본위험등급(잠정)": "확인필요",
+                                     "계산상태": "계산 보류: " + reason})
+                decision.update({"상태": "화재감시자 적용·예외조건 확인 필요", "적용점수": None})
+            else:
+                score = 2 if old_omitted else 1
+                row["점수"] = score
+                row["가중점수"] = score * row["가중치"]
+                decision.update({"상태": "반복 미조치" if score == 2 else "최초 미조치",
+                                 "적용점수": score})
+        else:
+            decision.update({"상태": "미조치 여부 확인 필요", "적용점수": row.get("점수")})
+        decisions.append(decision)
+
+    detail = pd.DataFrame(record["응답상세"])
+    representatives = select_representatives(detail)
+    for index, row in enumerate(record["응답상세"]):
+        row["집계대표여부"] = index in representatives.index
+    summary = record["요약"]
+    summary["집계항목수"] = len(representatives)
+    summary["반복미조치기준버전"] = "구역반복-v1"
+    record["반복미조치판정"] = {"직전평가ID": (previous or {}).get("평가ID"), "항목": decisions}
+    if summary["위험지수"] is not None:
+        total = float(representatives["가중점수"].sum())
+        maximum = float(representatives["최대가중점수"].sum())
+        summary.update({"총가중위험점수": total,
+                        "최대가중점수": maximum,
+                        "위험지수": total / maximum * 100 if maximum > 0 else None})
+    return record
+
+
 def save_evaluation(record, storage_path):
     """평가 전체를 하나의 트랜잭션으로 저장. 같은 ID의 다른 내용은 거부합니다."""
     import sqlite3

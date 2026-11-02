@@ -635,6 +635,12 @@ def create_app(storage_path=None, origins=None):
         builder = watcher_input.build if body.task_id == "H05" else engine.build_evaluation
         record = builder(body.site_name, body.task_id, answers, watcher_answers,
                          evaluation_id=identifier, evaluated_at=datetime.now(timezone.utc).isoformat(timespec="microseconds"))
+        watcher_repeat_eligible = True
+        if body.task_id == "H05":
+            watcher_context = watcher_input.context(body.task_id, answers, watcher_answers)
+            watcher_repeat_eligible = (watcher_context["place_status"] == "해당 응답 있음"
+                                       and watcher_answers.get("W004") == "아니오")
+        engine.apply_zone_repeat_scores(record, previous, watcher_repeat_eligible=watcher_repeat_eligible)
         image = evaluation_storage.site_blueprint_metadata(storage, str(site_id), str(image_id))
         record.update({"현장ID": str(site_id), "작업구역ID": str(zone_id), "작업구역명": zone["name"],
                        "작업구역좌표": zone["coordinates"],
@@ -664,7 +670,13 @@ def create_app(storage_path=None, origins=None):
         record["작업시간"] = current_draft.get("작업시간") or {"시작일시": None, "종료일시": None}
         record["동시작업분석"] = zone_interference_result(site_id, image_id, ZoneInterferenceInput())["동시작업분석"]
         record["동시작업분석기준버전"] = interference.VERSION
-        evaluation_storage.save_zone_assessment(storage, str(site_id), str(image_id), str(zone_id), record)
+        try:
+            evaluation_storage.save_zone_assessment(
+                storage, str(site_id), str(image_id), str(zone_id), record,
+                expected_previous_id=previous["평가ID"] if previous else None,
+            )
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
         return {"평가": record, "입력상태": "완료"}
 
     @app.post("/api/questions")

@@ -1,5 +1,6 @@
 """Zone draft and independent scoring checks: python -m unittest fire_risk_project.test_zone_assessment."""
 import base64
+from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -8,7 +9,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from .api import create_app
-from . import risk_engine as engine
+from . import risk_engine as engine, storage as evaluation_storage, evaluation_history
 
 
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jv4kAAAAASUVORK5CYII="
@@ -50,6 +51,102 @@ class ZoneAssessmentTests(unittest.TestCase):
         return {"site_name": "테스트 현장", "task_id": task_id, "answers": answers,
                 "materials": {"ids": [], "custom_names": [], "unknown": True},
                 "watcher_answers": {"W001": "아니오", "W004": "아니오"} if task_id == "H05" else {}}
+
+    def test_repeat_mitigation_first_repeat_cap_completion_and_recurrence(self):
+        url = self.url(0) + "/evaluate"
+        missed = self.payload("H05", Q003="미실시", Q004="미배치")
+        completed = self.payload("H05", Q003="실시", Q004="배치")
+        records = []
+        for payload in (missed, missed, missed, completed, missed):
+            response = self.client.post(url, json=payload)
+            self.assertEqual(response.status_code, 200, response.text)
+            records.append(response.json()["평가"])
+
+        expected = ((1, 1), (2, 2), (2, 2), (0, 0), (1, 1))
+        maximum = records[0]["요약"]["최대가중점수"]
+        for record, (spark, watcher) in zip(records, expected):
+            details = {row["항목ID"]: row for row in record["응답상세"]}
+            self.assertEqual((details["Q003"]["점수"], details["Q004"]["점수"]), (spark, watcher))
+            self.assertEqual((details["Q003"]["가중점수"], details["Q004"]["가중점수"]), (spark, watcher))
+            self.assertEqual((details["Q003"]["최대가중점수"], details["Q004"]["최대가중점수"]), (2, 2))
+            self.assertEqual(record["요약"]["최대가중점수"], maximum)
+            total = sum(row["가중점수"] for row in record["응답상세"] if row["집계대표여부"])
+            self.assertEqual(record["요약"]["총가중위험점수"], total)
+            self.assertAlmostEqual(record["요약"]["위험지수"], total / maximum * 100)
+            self.assertEqual(record["요약"]["반복미조치기준버전"], "구역반복-v1")
+        self.assertEqual([record["이전구역평가ID"] for record in records],
+                         [None] + [record["평가ID"] for record in records[:-1]])
+        self.assertLess(records[3]["요약"]["위험지수"], records[2]["요약"]["위험지수"])
+        baseline = engine.build_evaluation(missed["site_name"], "H05", missed["answers"], missed["watcher_answers"])
+        self.assertNotIn("반복미조치기준버전", baseline["요약"])
+        base_rows = {row["항목ID"]: row for row in baseline["응답상세"]}
+        for row in records[0]["응답상세"]:
+            if row["항목ID"] not in ("Q003", "Q004"):
+                self.assertEqual(row["가중점수"], base_rows[row["항목ID"]]["가중점수"])
+        saved_first = self.client.get(f"/api/zone-assessments/{records[0]['평가ID']}").json()["평가"]
+        self.assertEqual(saved_first["응답상세"], records[0]["응답상세"])
+        saved_repeat = self.client.get(f"/api/zone-assessments/{records[1]['평가ID']}").json()["평가"]
+        self.assertEqual(saved_repeat["반복미조치판정"], records[1]["반복미조치판정"])
+        history = self.client.get("/api/zone-assessments", params={"site_id": self.site}).json()["평가이력"]
+        self.assertTrue({record["평가ID"] for record in records}.issubset({row["평가ID"] for row in history}))
+        other_zone = self.client.post(self.url(1) + "/evaluate", json=missed).json()["평가"]
+        other_details = {row["항목ID"]: row for row in other_zone["응답상세"]}
+        self.assertEqual((other_details["Q003"]["점수"], other_details["Q004"]["점수"]), (1, 1))
+        with self.assertRaisesRegex(ValueError, "직전 구역 평가가 변경"):
+            evaluation_storage.save_zone_assessment(
+                self.db, self.site, self.image, self.zones[0], baseline,
+                expected_previous_id=records[0]["평가ID"],
+            )
+        old_version = deepcopy(records[0])
+        old_version["요약"].pop("반복미조치기준버전")
+        comparison = evaluation_history.compare(old_version, records[1])
+        self.assertFalse(comparison["비교안내"]["점수차이표시가능"])
+        self.assertIn("반복 미조치 기준 버전 불일치", comparison["비교안내"]["비교제한사유"])
+
+    def test_repeat_mitigation_respects_watcher_exception_and_unknown(self):
+        url = self.url(0) + "/evaluate"
+        missed = self.payload("H05", Q003="미실시", Q004="미배치")
+        first = self.client.post(url, json=missed).json()["평가"]
+        claimed_exception = {**missed, "watcher_answers": {"W001": "아니오", "W004": "예"}}
+        response = self.client.post(url, json=claimed_exception)
+        self.assertEqual(response.status_code, 200, response.text)
+        exception_record = response.json()["평가"]
+        exception_rows = {row["항목ID"]: row for row in exception_record["응답상세"]}
+        self.assertEqual(exception_rows["Q003"]["점수"], 2)
+        self.assertIsNone(exception_rows["Q004"]["점수"])
+        self.assertIsNone(exception_record["요약"]["위험지수"])
+        self.assertEqual(exception_record["반복미조치판정"]["직전평가ID"], first["평가ID"])
+        self.assertEqual(exception_record["반복미조치판정"]["항목"][1]["상태"],
+                         "화재감시자 적용·예외조건 확인 필요")
+        unknown = self.payload("H05", Q003="미실시", Q004="확인불가")
+        response = self.client.post(url, json=unknown)
+        self.assertEqual(response.status_code, 200, response.text)
+        held = response.json()["평가"]
+        held_row = next(row for row in held["응답상세"] if row["항목ID"] == "Q004")
+        self.assertIsNone(held_row["점수"])
+        self.assertIsNone(held["요약"]["위험지수"])
+        not_target = self.payload("H05", Q001="없음", Q003="미실시", Q004="미배치",
+                                  Q019="없음", Q020="없음")
+        response = self.client.post(url, json=not_target)
+        self.assertEqual(response.status_code, 200, response.text)
+        not_target_record = response.json()["평가"]
+        self.assertIsNone(next(row["점수"] for row in not_target_record["응답상세"]
+                               if row["항목ID"] == "Q004"))
+        self.assertIsNone(not_target_record["요약"]["위험지수"])
+
+    def test_repeat_mitigation_tracks_each_question_independently(self):
+        url = self.url(0) + "/evaluate"
+        inputs = (self.payload("H05", Q003="미실시", Q004="배치"),
+                  self.payload("H05", Q003="실시", Q004="미배치"),
+                  self.payload("H05", Q003="미실시", Q004="미배치"))
+        records = []
+        for payload in inputs:
+            response = self.client.post(url, json=payload)
+            self.assertEqual(response.status_code, 200, response.text)
+            records.append(response.json()["평가"])
+        scores = [tuple(next(row["점수"] for row in record["응답상세"] if row["항목ID"] == qid)
+                        for qid in ("Q003", "Q004")) for record in records]
+        self.assertEqual(scores, [(1, 0), (0, 1), (1, 2)])
 
     def test_distinct_tasks_answers_results_and_legacy_score_parity(self):
         catalogue = self.client.get("/api/zone-tasks")

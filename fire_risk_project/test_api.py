@@ -386,7 +386,7 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(merged['화재감시자입력']['예외조건응답'], exception)
                 rows = [r for r in merged['응답상세'] if r['항목ID'] == 'Q004']
                 self.assertEqual(len(rows), 1)
-                self.assertEqual(rows[0]['가중점수'], 6 if deployment == '미배치' else 0)
+                self.assertEqual(rows[0]['가중점수'], engine.score_answer('Q004', deployment)['가중점수'])
                 self.assertFalse(merged['화재감시자검토']['예외조건검증완료'])
                 self.assertTrue(self.previous(merged)['비교안내']['점수차이표시가능'])
 
